@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tragwerk-studio",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["tools/serve.py", "8080"],
+      "port": 8080
+    }
+  ]
+}

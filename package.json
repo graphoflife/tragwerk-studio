@@ -1,0 +1,10 @@
+{
+  "name": "tragwerk-studio",
+  "private": true,
+  "type": "module",
+  "description": "Browser-based modular 3D FEM software for structural analysis and design (Eurocode / SIA)",
+  "scripts": {
+    "test": "node tests/run-all.mjs",
+    "serve": "python3 tools/serve.py 8080"
+  }
+}
