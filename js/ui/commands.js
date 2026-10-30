@@ -1,7 +1,8 @@
 // Command registry (used by ribbon, menus, command palette and keyboard shortcuts) and ribbon layout.
 import { t } from '../i18n.js';
 import { toast } from './dom.js';
-import { removeEntities, intersectLines, mergeNodes } from '../core/model.js';
+import { intersectLines, mergeNodes } from '../core/model.js';
+import { deleteSelection } from './dialogs/delete.js';
 import { openMaterials, openSections, openLoadCases, openCombinations, autoCombinations } from './dialogs/manage.js';
 import { assignLineElement, editReleases, supportDialog, quickSupport, domainFromSelection, addHoleFromSelection, designParams } from './dialogs/assign.js';
 import { nodeLoadDialog, lineLoadDialog, surfaceLoadDialog, temperatureDialog, settlementDialog, toggleSelfWeight, snowWindDialog } from './dialogs/loads.js';
@@ -85,13 +86,9 @@ export function createCommands(app) {
     showAll: { label: 'Alle zeigen', desc: 'Alle ausgeblendeten Elemente wieder anzeigen', icon: 'eye', kbd: 'Alt+H', run: () => app.showAll() },
 
     // ---- selection
-    selectAll: { label: 'Alles auswählen', desc: 'Alle sichtbaren Objekte auswählen', icon: 'boxsel', kbd: 'Ctrl+A', run: () => app.selectAll() },
+    selectAll: { label: 'Alles auswählen', desc: 'Alle sichtbaren Objekte auswählen (inkl. Lager und Lasten des aktiven Lastfalls, je nach Auswahlfilter)', icon: 'boxsel', kbd: 'Ctrl+A', run: () => app.selectAll() },
     invertSel: { label: 'Auswahl umkehren', desc: 'Auswahl invertieren', icon: 'filter', kbd: 'Ctrl+I', run: () => app.invertSelection() },
-    delete: { label: 'Löschen', desc: 'Ausgewählte Objekte löschen (inkl. zugehöriger Lager und Lasten)', icon: 'trash', kbd: 'Del', run: () => {
-      if (!st.selCount()) return toast(t('Nichts ausgewählt.'), 'info');
-      const s = st.selection;
-      st.commit(t('Löschen'), (m) => removeEntities(m, { nodes: [...s.nodes], lines: [...s.lines], domains: [...s.domains] }));
-    } },
+    delete: { label: 'Löschen', desc: 'Auswahl löschen – bei gemischter Auswahl lässt sich wählen, welche Objektarten (Knoten, Linien, Stäbe, Flächen, Lager, Lasten) gelöscht werden', icon: 'trash', kbd: 'Del', run: () => deleteSelection(app) },
 
     // ---- geometry
     toolSelect: { label: 'Auswahl', desc: 'Objekte auswählen (Klick / Rechteck)', icon: 'select', kbd: 'Q', run: tool('select'), active: isTool('select') },

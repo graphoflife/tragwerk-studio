@@ -79,7 +79,10 @@ export class App {
     this.sideBody = h('div.side-body');
     this.sideEl = h('aside.side', this.sideTabsEl, this.sideBody);
     this.mainEl = h('div.main', this.railEl, this.vpEl, this.sideEl);
-    if (matchMedia('(max-width: 820px)').matches) this.mainEl.classList.add('panel-hidden');
+    // side panel: overlay (hidden by default) on narrow screens, docked on wide ones
+    const narrow = matchMedia('(max-width: 820px)');
+    if (narrow.matches) this.mainEl.classList.add('panel-hidden');
+    narrow.addEventListener('change', (e) => this.mainEl.classList.toggle('panel-hidden', e.matches));
 
     // status
     this.coordsEl = h('div.coords');
@@ -195,8 +198,7 @@ export class App {
   ribbonButton(id) {
     const c = this.cmds[id];
     if (!c) return h('span', id);
-    const b = h('button.rbtn' + (id.startsWith('run') ? '.primary' : ''), { onclick: () => c.run(), tip: [c.label, c.desc, c.kbd] },
-      h('span.chip', ic(c.icon)), h('span.rbtn-label', c.label));
+    const b = h('button.rbtn' + (id.startsWith('run') ? '.primary' : ''), { onclick: () => c.run(), tip: [c.label, c.desc, c.kbd] }, ic(c.icon));
     b.dataset.cmd = id;
     return b;
   }
@@ -212,22 +214,27 @@ export class App {
       step.style.width = '96px';
       tip(off, t('Lage der Arbeitsebene'), t('Abstand der Arbeitsebene vom Ursprung (z.B. Geschosshöhe für XY)'));
       tip(step, t('Rasterweite'), t('Abstand der Fangpunkte auf der Arbeitsebene'));
-      return h('div.rstack', h('div.row', seg, h('span.small.muted', t('Ebene'))),
-        h('div.row', h('span.small.muted', t('Lage')), off, h('span.small.muted', t('Raster')), step));
+      off.style.width = '84px'; step.style.width = '84px';
+      tip(seg, t('Arbeitsebene'), t('Ebene, auf der gezeichnet und gefangen wird'));
+      return h('div.rstack', seg, ic('plane'), off, ic('grid'), step);
     }
     if (kind === 'lcSelect') {
       const opts = store.model.loadCases.map((lc) => ({ value: lc.id, label: lc.name }));
       const sel = selectInput({ value: store.activeLC, options: opts.length ? opts : [{ value: '', label: t('– keine –') }], onChange: (v) => this.setActiveLC(+v) });
-      sel.style.width = '200px';
+      sel.style.width = '190px';
+      tip(sel, t('Aktiver Lastfall'), t('Neue Lasten werden diesem Lastfall zugeordnet; angezeigt werden nur seine Lasten.'));
       const add = h('button.icon-btn.sm', { onclick: () => this.addLoadCase(), tip: [t('Neuer Lastfall'), t('Lastfall anlegen und aktivieren')] }, ic('plus'));
-      return h('div.rstack', h('span.small.muted', t('Aktiver Lastfall')), h('div.row', { style: { gap: '4px' } }, sel, add));
+      return h('div.rstack', sel, add);
     }
     return h('span');
   }
 
   setActiveLC(id) {
     store.activeLC = id;
+    store.selection.loads.clear();
     store.emit('lc');
+    store.emit('selection');
+    if (store.tab === 'loads') this.renderRibbon();
     this.refreshChrome();
     this.renderSideNow();
   }
@@ -373,12 +380,17 @@ export class App {
   }
 
   /* ---------------- selection helpers ---------------- */
+  // everything visible: geometry plus the shown supports and the loads of the active load case
+  visibleGlyphs(kind) { return (this.vp.glyphPicks || []).filter((g) => g.kind === kind).map((g) => g.id); }
+
   selectAll() {
     const v = store.view, f = v.selFilter, m = store.model;
     store.select({
       nodes: f.nodes ? m.nodes.filter((n) => !v.hidden.nodes.has(n.id)).map((n) => n.id) : [],
       lines: f.lines ? m.lines.filter((l) => !v.hidden.lines.has(l.id)).map((l) => l.id) : [],
       domains: f.domains ? m.domains.filter((d) => !v.hidden.domains.has(d.id)).map((d) => d.id) : [],
+      supports: f.supports ? this.visibleGlyphs('support') : [],
+      loads: f.loads ? this.visibleGlyphs('load') : [],
     }, 'replace');
   }
 
@@ -388,6 +400,8 @@ export class App {
       nodes: f.nodes ? m.nodes.filter((n) => !s.nodes.has(n.id)).map((n) => n.id) : [],
       lines: f.lines ? m.lines.filter((l) => !s.lines.has(l.id)).map((l) => l.id) : [],
       domains: f.domains ? m.domains.filter((d) => !s.domains.has(d.id)).map((d) => d.id) : [],
+      supports: f.supports ? this.visibleGlyphs('support').filter((id) => !s.supports.has(id)) : [],
+      loads: f.loads ? this.visibleGlyphs('load').filter((id) => !s.loads.has(id)) : [],
     }, 'replace');
   }
 
@@ -423,6 +437,7 @@ export class App {
     s.nodes.forEach((id) => { const n = idx.nodes.get(id); pts.push([n.x, n.y, n.z]); });
     s.lines.forEach((id) => { const l = idx.lines.get(id); for (const n of [l.n1, l.n2]) { const nn = idx.nodes.get(n); pts.push([nn.x, nn.y, nn.z]); } });
     s.domains.forEach((id) => idx.domains.get(id).nodes.forEach((n) => { const nn = idx.nodes.get(n); pts.push([nn.x, nn.y, nn.z]); }));
+    for (const g of this.vp.glyphPicks || []) if ((g.kind === 'support' ? s.supports : s.loads).has(g.id)) pts.push(...g.pts, ...g.segs.flat());
     this.vp.zoomTo(pts);
   }
 
@@ -435,7 +450,8 @@ export class App {
     };
     const r = anchor.getBoundingClientRect();
     openPopover({ x: r.right + 8, y: r.top }, h('div', { style: { minWidth: '200px' } },
-      h('div.side-section-title', t('Auswählbar')), row('nodes', t('Knoten'), 'node'), row('lines', t('Linien / Stäbe'), 'line'), row('domains', t('Flächen'), 'domain')));
+      h('div.side-section-title', t('Auswählbar')), row('nodes', t('Knoten'), 'node'), row('lines', t('Linien / Stäbe'), 'line'), row('domains', t('Flächen'), 'domain'),
+      row('supports', t('Lager'), 'supportPin'), row('loads', t('Lasten'), 'loadNode')));
   }
 
   openDisplayOptions(anchor) {
@@ -460,7 +476,7 @@ export class App {
       items.push({ label: t('Eigenschaften'), icon: 'sliders', onClick: () => this.showSide('props') });
       items.push({ label: t('Zoom auf Auswahl'), icon: 'zoomIn', onClick: () => this.zoomSelection() });
       items.push('sep');
-      items.push(it('toolMove'), it('toolCopy'), it('toolRotate'), it('move'), it('mirror'), 'sep');
+      if (store.geoCount()) items.push(it('toolMove'), it('toolCopy'), it('toolRotate'), it('move'), it('mirror'), 'sep');
       if (s.nodes.size) items.push(it('supNode'), it('loadNode'));
       if (s.lines.size) items.push(it('assignLine'), it('releases'), it('split'), it('loadLine'), it('supLine'));
       if (s.domains.size) items.push(it('loadSurface'), it('supSurface'));

@@ -121,7 +121,7 @@ export class Viewport {
       this.buildResults();
       this.buildSelection();
     } else {
-      if (d.has('loads')) this.buildOverlays();
+      if (d.has('loads')) { this.buildOverlays(); this.buildSelection(); }
       if (d.has('results')) { this.buildModel(); this.buildOverlays(); this.buildResults(); this.buildSelection(); }
       if (d.has('sel')) this.buildSelection();
     }
@@ -405,6 +405,7 @@ export class Viewport {
 
   buildOverlays() {
     for (const k of ['supports', 'loads', 'axes']) disposeGroup(this.groups[k], this.lines);
+    this.glyphPicks = [];
     const v = this.store.view;
     if (v.showSupports) buildSupports(this, this.groups.supports);
     if (v.showLoads && !this.isResultMode() && this.store.activeLC) buildLoads(this, this.groups.loads, this.store.activeLC);
@@ -446,7 +447,23 @@ export class Viewport {
       if (ln) { ln.renderOrder = 25; g.add(ln); }
     }
     if (s.domains.size) g.add(...this.domainOverlay([...s.domains], C.sel, 0.35));
+    if (s.supports.size || s.loads.size) g.add(...this.glyphOverlay((e) => (e.kind === 'support' ? s.supports : s.loads).has(e.id), C.sel, 4));
     this.requestRender();
+  }
+
+  // highlight of support/load glyphs (selection, hover)
+  glyphOverlay(test, color, width) {
+    const segs = [], pts = [];
+    for (const e of this.glyphPicks || []) {
+      if (!test(e)) continue;
+      for (const [a, b] of e.segs) segs.push(...a, ...b);
+      for (const p of e.pts) pts.push(...p);
+    }
+    const out = [];
+    const ln = this.lines.make(segs, color, width, { depthTest: false });
+    if (ln) { ln.renderOrder = 26; out.push(ln); }
+    if (pts.length) out.push(makePoints(pts, color, 12, { ring: true, depthTest: false }));
+    return out;
   }
 
   domainOverlay(ids, color, opacity) {
@@ -495,6 +512,8 @@ export class Viewport {
         }
       } else if (hit.kind === 'domain') {
         g.add(...this.domainOverlay([hit.id], C.hover, 0.22));
+      } else if (hit.kind === 'support' || hit.kind === 'load') {
+        g.add(...this.glyphOverlay((e) => e.kind === hit.kind && e.id === hit.id, C.hover, 3.5));
       }
     }
     this.requestRender();
@@ -618,8 +637,9 @@ export class Viewport {
       }
       if (best) return best;
     }
+    // lines and support/load glyphs: the closest one within the tolerance wins
+    let bd = 7;
     if (filter.lines) {
-      let bd = 7;
       const proj = new Map();
       const pj = (id) => { if (!proj.has(id)) { const n = idx.nodes.get(id); proj.set(id, this.project([n.x, n.y, n.z])); } return proj.get(id); };
       for (const l of model.lines) {
@@ -633,8 +653,23 @@ export class Viewport {
           best = { kind: 'line', id: l.id, t: r.t, p: V.lerp(pa, pb, r.t) };
         }
       }
-      if (best) return best;
     }
+    for (const g of this.glyphPicks || []) {
+      if (!filter[g.kind + 's']) continue;
+      for (const [a3, b3] of g.segs) {
+        const a = this.project(a3), b = this.project(b3);
+        if (!a.ok || !b.ok) continue;
+        const r = distToSeg(x, y, a, b);
+        if (r.d < bd) { bd = r.d; best = { kind: g.kind, id: g.id, p: V.lerp(a3, b3, r.t) }; }
+      }
+      for (const p3 of g.pts) {
+        const s2 = this.project(p3);
+        if (!s2.ok) continue;
+        const d = Math.hypot(s2.x - x, s2.y - y);
+        if (d < Math.max(bd, 9) && d < bd + 3) { bd = d; best = { kind: g.kind, id: g.id, p: p3 }; }
+      }
+    }
+    if (best) return best;
     if (filter.domains && this.domainMesh) {
       this.ray(x, y);
       const hits = this.raycaster.intersectObject(this.domainMesh, false);
@@ -654,7 +689,7 @@ export class Viewport {
     const inside = (s) => s.ok && s.x >= minx && s.x <= maxx && s.y >= miny && s.y <= maxy;
     const proj = new Map();
     for (const n of model.nodes) proj.set(n.id, this.project([n.x, n.y, n.z]));
-    const out = { nodes: [], lines: [], domains: [] };
+    const out = { nodes: [], lines: [], domains: [], supports: [], loads: [] };
     if (filter.nodes) for (const n of model.nodes) if (!hidden.nodes.has(n.id) && inside(proj.get(n.id))) out.nodes.push(n.id);
     if (filter.lines) {
       for (const l of model.lines) {
@@ -670,6 +705,13 @@ export class Viewport {
         const ins = d.nodes.map((id) => inside(proj.get(id)));
         if (ins.every(Boolean) || (crossing && ins.some(Boolean))) out.domains.push(d.id);
       }
+    }
+    for (const g of this.glyphPicks || []) {
+      if (!filter[g.kind + 's']) continue;
+      const pts = [...g.pts, ...g.segs.flat()].map((p) => this.project(p));
+      if (!pts.length) continue;
+      const ins = pts.map(inside);
+      if (ins.every(Boolean) || (crossing && ins.some(Boolean))) out[g.kind + 's'].push(g.id);
     }
     return out;
   }
@@ -765,6 +807,7 @@ export class Viewport {
     this.camera.position.copy(target.clone().add(d.multiplyScalar(dist)));
     if (this.camera === this.ortho) { this.orthoHalfH = b.size * 0.6; this.ortho.zoom = 1; this.updateOrthoFrustum(); }
     this.controls.update();
+    if (this.store.model.nodes.length) { this.fitTight(b); this.controls.update(); }
     this.requestRender();
   }
 
@@ -773,6 +816,24 @@ export class Viewport {
     const fov = (this.persp.fov * Math.PI) / 180;
     const aspect = Math.max(0.3, this.width / this.height);
     return r / Math.sin(Math.min(fov, fov * aspect) / 2) * 1.05;
+  }
+
+  // Tighten the framing: scale camera distance (or ortho height) so the projected bounding box fills ~78 % (room for load glyphs)
+  fitTight(b) {
+    const corners = [];
+    for (const x of [b.min[0], b.max[0]]) for (const y of [b.min[1], b.max[1]]) for (const z of [b.min[2], b.max[2]]) corners.push(new THREE.Vector3(x, y, z));
+    const target = this.controls.target;
+    for (let it = 0; it < 3; it++) {
+      this.camera.updateMatrixWorld();
+      this.camera.updateProjectionMatrix();
+      let m = 0;
+      for (const c of corners) { const v = c.clone().project(this.camera); m = Math.max(m, Math.abs(v.x), Math.abs(v.y)); }
+      if (!(m > 1e-6) || !Number.isFinite(m)) return;
+      const f = Math.min(4, Math.max(0.25, m / 0.78));
+      if (this.camera === this.ortho) { this.orthoHalfH *= f; this.updateOrthoFrustum(); }
+      else this.camera.position.copy(target.clone().add(this.camera.position.clone().sub(target).multiplyScalar(f)));
+      if (Math.abs(f - 1) < 0.02) break;
+    }
   }
 
   zoomExtents(keepDir = true) {
@@ -786,6 +847,7 @@ export class Viewport {
     this.camera.position.copy(target.clone().add(dir.multiplyScalar(this.fitDistance(b))));
     if (this.camera === this.ortho) { this.orthoHalfH = b.size * 0.6; this.ortho.zoom = 1; this.updateOrthoFrustum(); }
     this.controls.update();
+    if (this.store.model.nodes.length) { this.fitTight(b); this.controls.update(); }
     this.requestRender();
   }
 

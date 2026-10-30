@@ -181,8 +181,11 @@ export function defaultLineElement(type, material, section) {
 }
 
 /* ---------------- deletion (with cascade) ---------------- */
-export function removeEntities(model, { nodes = [], lines = [], domains = [] }) {
+export function removeEntities(model, { nodes = [], lines = [], domains = [], supports = [], loads = [] }) {
   const nodeSet = new Set(nodes), lineSet = new Set(lines), domSet = new Set(domains);
+  const supSet = new Set(supports), loadSet = new Set(loads);
+  model.supports = model.supports.filter((s) => !supSet.has(s.id));
+  model.loads = model.loads.filter((l) => !loadSet.has(l.id));
   // lines attached to removed nodes
   for (const l of model.lines) if (nodeSet.has(l.n1) || nodeSet.has(l.n2)) lineSet.add(l.id);
   for (const d of model.domains) {

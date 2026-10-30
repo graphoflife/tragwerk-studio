@@ -53,7 +53,7 @@ export function tip(el, title, desc, kbd) {
   el.setAttribute('aria-label', title);
   el.addEventListener('mouseenter', () => {
     clearTimeout(ttTimer);
-    ttTimer = setTimeout(() => showTip(el, title, desc, kbd), 380);
+    ttTimer = setTimeout(() => showTip(el, title, desc, kbd), el.classList.contains('rbtn') ? 180 : 380);
   });
   el.addEventListener('mouseleave', hideTip);
   el.addEventListener('mousedown', hideTip);

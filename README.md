@@ -46,7 +46,8 @@ Alternativ ohne Actions: *Source: Deploy from a branch*, Branch `main`, Ordner `
 
 | Aktion | Maus / Taste |
 |---|---|
-| Auswählen | Klick; Rechteck ziehen (→ Fenster, ← Kreuzen); `Shift` hinzufügen, `Ctrl` umschalten |
+| Auswählen | Klick; Rechteck ziehen (→ Fenster, ← Kreuzen); `Shift` hinzufügen, `Ctrl` umschalten. Knoten, Linien/Stäbe, Flächen, **Lager und Lasten** (Pfeile des aktiven Lastfalls) sind einzeln wählbar; der Auswahlfilter links schränkt die Arten ein |
+| Löschen | `Entf`: bei gemischter Auswahl erscheint ein Dialog, in dem man wählt, welche Arten gelöscht werden (Knoten, Linien, Stäbe – ganz oder nur die Stabeigenschaft –, Flächen, Lager, Lasten) |
 | Ansicht drehen / verschieben / zoomen | rechte Maustaste / mittlere Maustaste / Mausrad (Touch: 1 bzw. 2 Finger) |
 | Zeichnen | `N` Knoten, `L` Linie, `B` Balken, `R` Rechteck, `P` Polygon, `A` Bogen, `M` Messen |
 | Verändern | `V` Verschieben, `K` Kopieren, `D` Drehen (interaktiv), `Shift+M` Mehrfach kopieren (Dialog), `Q` Auswahl |

@@ -9,7 +9,7 @@ class Store {
     this.listeners = new Map();
     this.model = createModel();
     this.idx = buildIndex(this.model);
-    this.selection = { nodes: new Set(), lines: new Set(), domains: new Set() };
+    this.selection = emptySelection();
     this.undoStack = [];
     this.redoStack = [];
     this.dirty = false;
@@ -35,7 +35,7 @@ class Store {
       snapMid: true,
       snapLine: false,
       ortho: false,
-      selFilter: { nodes: true, lines: true, domains: true },
+      selFilter: { nodes: true, lines: true, domains: true, supports: true, loads: true },
     };
     this.resultView = {
       kind: null,            // 'static' | 'modal' | 'buckling' | 'spectrum' | 'steel' | 'rc' | 'timber'
@@ -119,7 +119,7 @@ class Store {
     this.model = migrate(model);
     if (!keepHistory) { this.undoStack.length = 0; this.redoStack.length = 0; }
     this.idx = buildIndex(this.model);
-    this.selection = { nodes: new Set(), lines: new Set(), domains: new Set() };
+    this.selection = emptySelection();
     this.view.hidden = { nodes: new Set(), lines: new Set(), domains: new Set() };
     this.activeLC = this.model.loadCases[0]?.id ?? null;
     this.dirty = false;
@@ -144,15 +144,15 @@ class Store {
 
   /* ---------- selection ---------- */
   pruneSelection() {
-    for (const k of ['nodes', 'lines', 'domains']) {
+    for (const k of SEL_KINDS) {
       for (const id of [...this.selection[k]]) if (!this.idx[k].has(id)) this.selection[k].delete(id);
     }
   }
 
   select(sel, mode = 'replace') {
     const s = this.selection;
-    if (mode === 'replace') { s.nodes.clear(); s.lines.clear(); s.domains.clear(); }
-    for (const k of ['nodes', 'lines', 'domains']) {
+    if (mode === 'replace') for (const k of SEL_KINDS) s[k].clear();
+    for (const k of SEL_KINDS) {
       for (const id of sel[k] || []) {
         if (mode === 'toggle') { if (s[k].has(id)) s[k].delete(id); else s[k].add(id); } else if (mode === 'remove') s[k].delete(id);
         else s[k].add(id);
@@ -163,11 +163,13 @@ class Store {
 
   clearSelection() {
     if (!this.selCount()) return;
-    this.selection.nodes.clear(); this.selection.lines.clear(); this.selection.domains.clear();
+    for (const k of SEL_KINDS) this.selection[k].clear();
     this.emit('selection');
   }
 
-  selCount() { return this.selection.nodes.size + this.selection.lines.size + this.selection.domains.size; }
+  selCount() { return SEL_KINDS.reduce((n, k) => n + this.selection[k].size, 0); }
+  // number of selected geometry objects (nodes, lines, domains) – what transformations act on
+  geoCount() { return this.selection.nodes.size + this.selection.lines.size + this.selection.domains.size; }
 
   /* ---------- view ---------- */
   setView(patch) {
@@ -199,6 +201,10 @@ class Store {
     } catch (e) { return false; }
   }
 }
+
+// everything that can be picked in the viewport
+export const SEL_KINDS = ['nodes', 'lines', 'domains', 'supports', 'loads'];
+function emptySelection() { return Object.fromEntries(SEL_KINDS.map((k) => [k, new Set()])); }
 
 function emptyResults() {
   return { mesh: null, static: null, staticOpts: null, modal: null, buckling: null, spectrum: null, steel: null, rc: null, rcBeams: null, timber: null };

@@ -14,6 +14,13 @@ export function loadDirection(dir, ax) {
 }
 
 /* ---------------- supports ---------------- */
+// Every glyph registers pick primitives in vp.glyphPicks: { kind, id, segs:[[a,b]], pts:[p] }
+function picker(vp, kind, id) {
+  const e = { kind, id, segs: [], pts: [] };
+  vp.glyphPicks.push(e);
+  return e;
+}
+
 export function buildSupports(vp, group) {
   const { model, idx } = vp.store;
   const C = vp.C, sz = vp.sz;
@@ -43,6 +50,9 @@ export function buildSupports(vp, group) {
       else mesh = new THREE.Mesh(coneGeo, ft === 3 ? mat : matSpring);
       mesh.position.set(n.x, n.y, n.z);
       group.add(mesh);
+      const pk = picker(vp, 'support', s.id);
+      pk.pts.push([n.x, n.y, n.z - sz * 0.6]);
+      pk.segs.push([[n.x, n.y, n.z - sz * 0.25], [n.x, n.y, n.z - sz * 1.1]]);
       if (ft < 3 && ft > 0) {
         // roller: base line
         segs.push(n.x - sz * 0.7, n.y, n.z - sz * 1.35, n.x + sz * 0.7, n.y, n.z - sz * 1.35);
@@ -56,6 +66,7 @@ export function buildSupports(vp, group) {
       let off = [0, 0, -sz * 1.1];
       if (Math.abs(b[2] - a[2]) > 0.95 * L) off = [-sz * 1.1, 0, 0];
       const n = Math.max(2, Math.min(14, Math.round(L / (sz * 2.5))));
+      const pk = picker(vp, 'support', s.id);
       for (let i = 0; i <= n; i++) {
         const p = V.lerp(a, b, i / n);
         const tip = p, base = V.add(p, off);
@@ -64,19 +75,23 @@ export function buildSupports(vp, group) {
       segs.push(...V.add(a, off), ...V.add(b, off));
       const off2 = V.mul(off, 1.25);
       segs.push(...V.add(a, off2), ...V.add(b, off2));
+      pk.segs.push([V.add(a, off), V.add(b, off)], [V.add(a, off2), V.add(b, off2)]);
     } else if (s.type === 'surface') {
       const d = idx.domains.get(s.domain);
       if (!d || hidden.domains.has(d.id)) continue;
       const pts = d.nodes.map((id) => P(idx.nodes.get(id)));
       const ax = domainAxes(pts);
       const off = V.mul(ax.ez, -sz * 0.9);
+      const pk = picker(vp, 'support', s.id);
       for (let i = 0; i < pts.length; i++) {
         const p = V.add(pts[i], off), q = V.add(pts[(i + 1) % pts.length], off);
         segs.push(...p, ...q);
         segs.push(...pts[i], ...p);
+        pk.segs.push([p, q]);
       }
       const c = centroid(pts);
       segs.push(...c, ...V.add(c, off));
+      pk.pts.push(V.add(c, off));
     }
   }
   const ln = vp.lines.make(segs, C.support, 2);
@@ -101,10 +116,12 @@ export function buildLoads(vp, group, lcId) {
 
   const arrows = new ArrowBatch(sz * 0.55, sz * 0.2);
   const segs = [], msegs = [], tsegs = [];
+  let pk = null; // pick entry of the load being drawn
   const arrow = (tip, dir, L, color = C.load, store = segs) => {
     const d = V.norm(dir), tail = V.sub(tip, V.mul(d, L));
     store.push(...tail, ...V.sub(tip, V.mul(d, sz * 0.5)));
     arrows.add(tip, d, color);
+    pk?.segs.push([tail, V.sub(tip, V.mul(d, sz * 0.5))]);
     return tail;
   };
   const dblArrow = (p, dir, L) => {
@@ -112,11 +129,13 @@ export function buildLoads(vp, group, lcId) {
     msegs.push(...p, ...tail);
     arrows.add(V.add(tail, V.mul(d, sz * 0.55)), V.mul(d, -1), C.moment);
     arrows.add(tail, V.mul(d, -1), C.moment);
+    pk?.segs.push([V.add(p, V.mul(d, -sz * 0.4)), tail]);
     return tail;
   };
   const lab = (txt, p, cls) => { if (showVals) group.add(label(txt, p, 'big ' + (cls || ''))); };
 
   for (const ld of loads) {
+    pk = picker(vp, 'load', ld.id);
     if (ld.type === 'node' || ld.type === 'nodeDisp') {
       const n = idx.nodes.get(ld.node);
       if (!n || hidden.nodes.has(n.id)) continue;
@@ -145,8 +164,10 @@ export function buildLoads(vp, group, lcId) {
       const a = P(idx.nodes.get(l.n1)), b = P(idx.nodes.get(l.n2));
       const ax = lineAxes(a, b, l.element?.beta || 0);
       if (ld.type === 'tempLine') {
-        tsegs.push(...a, ...b);
-        lab(`ΔT ${fmt('temp', ld.dT || 0)}${ld.dTz ? ' / ΔTz ' + fmt('temp', ld.dTz) : ''}`, V.lerp(a, b, 0.5), 'temp');
+        const off = V.mul(ax.ez, sz * 0.7), a2 = V.add(a, off), b2 = V.add(b, off);
+        tsegs.push(...a2, ...b2);
+        pk.segs.push([a2, b2]);
+        lab(`ΔT ${fmt('temp', ld.dT || 0)}${ld.dTz ? ' / ΔTz ' + fmt('temp', ld.dTz) : ''}`, V.lerp(a2, b2, 0.5), 'temp');
         continue;
       }
       const dv = loadDirection(ld.dir, ax);
@@ -171,7 +192,7 @@ export function buildLoads(vp, group, lcId) {
         if (Math.abs(q) < 1e-12) { tails.push(p); continue; }
         tails.push(arrow(p, V.mul(dv, Math.sign(q)), len(q, maxQ)));
       }
-      for (let i = 0; i < tails.length - 1; i++) segs.push(...tails[i], ...tails[i + 1]);
+      for (let i = 0; i < tails.length - 1; i++) { segs.push(...tails[i], ...tails[i + 1]); pk.segs.push([tails[i], tails[i + 1]]); }
       if (Math.abs(ld.q1 - ld.q2) < 1e-9) lab(fmt('lineLoad', Math.abs(ld.q1)), V.lerp(tails[0], tails[tails.length - 1], 0.5));
       else { lab(fmt('lineLoad', Math.abs(ld.q1)), tails[0]); lab(fmt('lineLoad', Math.abs(ld.q2)), tails[tails.length - 1]); }
     } else if (ld.type === 'surface' || ld.type === 'tempDomain') {
@@ -181,8 +202,13 @@ export function buildLoads(vp, group, lcId) {
       const ax = domainAxes(pts);
       const c = centroid(pts);
       if (ld.type === 'tempDomain') {
-        for (let i = 0; i < pts.length; i++) tsegs.push(...pts[i], ...pts[(i + 1) % pts.length]);
-        lab(`ΔT ${fmt('temp', ld.dT || 0)}${ld.dTz ? ' / ΔTz ' + fmt('temp', ld.dTz) : ''}`, c, 'temp');
+        const off = V.mul(ax.ez, sz * 0.5);
+        for (let i = 0; i < pts.length; i++) {
+          const p = V.add(pts[i], off), q = V.add(pts[(i + 1) % pts.length], off);
+          tsegs.push(...p, ...q);
+          pk.segs.push([p, q]);
+        }
+        lab(`ΔT ${fmt('temp', ld.dT || 0)}${ld.dTz ? ' / ΔTz ' + fmt('temp', ld.dTz) : ''}`, V.add(c, off), 'temp');
         continue;
       }
       const dv = V.mul(loadDirection(ld.dir, ax), Math.sign(ld.q) || 1);
@@ -191,7 +217,10 @@ export function buildLoads(vp, group, lcId) {
       const tails = samples.map((p) => arrow(p, dv, L));
       // outline of the load plane
       const off = V.mul(dv, -L);
-      for (let i = 0; i < pts.length; i++) segs.push(...V.add(pts[i], off), ...V.add(pts[(i + 1) % pts.length], off));
+      for (let i = 0; i < pts.length; i++) {
+        segs.push(...V.add(pts[i], off), ...V.add(pts[(i + 1) % pts.length], off));
+        pk.segs.push([V.add(pts[i], off), V.add(pts[(i + 1) % pts.length], off)]);
+      }
       lab(fmt('areaLoad', Math.abs(ld.q)), V.add(c, off));
       if (!tails.length) arrow(c, dv, L);
     }

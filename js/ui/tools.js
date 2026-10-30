@@ -81,7 +81,8 @@ class SelectTool {
   constructor(tools) { this.T = tools; this.start = null; }
   hint() {
     const n = this.T.store.selCount();
-    if (n) return t('<b>{n}</b> Objekte ausgewählt · <b>V</b> verschieben · <b>K</b> kopieren · <b>D</b> drehen · <b>Entf</b> löschen · <b>Rechtsklick</b> Menü', { n });
+    if (n && this.T.store.geoCount()) return t('<b>{n}</b> Objekte ausgewählt · <b>V</b> verschieben · <b>K</b> kopieren · <b>D</b> drehen · <b>Entf</b> löschen · <b>Rechtsklick</b> Menü', { n });
+    if (n) return t('<b>{n}</b> Lager/Lasten ausgewählt · Werte rechts bearbeiten · <b>Entf</b> löschen', { n });
     return t('<b>Klicken</b> zum Auswählen · <b>Ziehen</b> für Rechteckauswahl (→ Fenster, ← Kreuzen) · <b>Rechts ziehen</b> drehen · <b>Mitte ziehen</b> verschieben · <b>Mausrad</b> zoomen');
   }
   down(e) { this.start = e; }
@@ -353,7 +354,7 @@ class TransformBase {
     this.T = tools;
     this.store = tools.store;
     this.opts = opts;
-    if (this.store.selCount()) this.startBase();
+    if (this.store.geoCount()) this.startBase();
     else { this.phase = 'select'; this.sel = new SelectTool(tools); }
   }
   label() { return ''; }
@@ -434,9 +435,9 @@ class TransformBase {
   down(e) { if (this.phase === 'select') this.sel.down(e); }
   move(e, dragging) { if (this.phase === 'select') this.sel.move(e, dragging); else this.pi.move(e); }
   up(e, moved) { if (this.phase === 'select') this.sel.up(e, moved); else if (!moved) this.pi.click(e); }
-  enter() { if (this.phase === 'select' && this.store.selCount()) this.startBase(); }
+  enter() { if (this.phase === 'select' && this.store.geoCount()) this.startBase(); }
   context(e) {
-    if (this.phase === 'select') { if (this.store.selCount()) this.startBase(); else this.T.set('select'); return; }
+    if (this.phase === 'select') { if (this.store.geoCount()) this.startBase(); else this.T.set('select'); return; }
     if (!this.escape()) this.T.set('select');
     void e;
   }

@@ -52,11 +52,16 @@ function renderProps(app, el) {
   if (s.nodes.size) parts.push(`${s.nodes.size} ${t('Knoten')}`);
   if (s.lines.size) parts.push(`${s.lines.size} ${t('Linien')}`);
   if (s.domains.size) parts.push(`${s.domains.size} ${t('Flächen')}`);
-  el.appendChild(h('div.sel-head', h('div.chip', ic(s.domains.size ? 'domain' : s.lines.size ? 'beam' : 'node')),
+  if (s.supports.size) parts.push(`${s.supports.size} ${t('Lager')}`);
+  if (s.loads.size) parts.push(`${s.loads.size} ${t('Lasten')}`);
+  const headIcon = s.domains.size ? 'domain' : s.lines.size ? 'beam' : s.nodes.size ? 'node' : s.supports.size ? 'supportPin' : 'loadNode';
+  el.appendChild(h('div.sel-head', h('div.chip', ic(headIcon)),
     h('div', h('div.t1', t('Auswahl')), h('div.t2', parts.join(' · ')))));
   if (s.nodes.size) el.appendChild(nodeProps(app));
   if (s.lines.size) el.appendChild(lineProps(app));
   if (s.domains.size) el.appendChild(domainProps(app));
+  if (s.supports.size) el.appendChild(supportProps(app));
+  if (s.loads.size) el.appendChild(loadProps(app));
   el.appendChild(h('div.row', { style: { marginTop: '8px', flexWrap: 'wrap' } },
     h('button.btn.sm', { onclick: () => app.zoomSelection() }, ic('zoomIn'), t('Zoom')),
     h('button.btn.sm', { onclick: () => app.hideSelection() }, ic('eyeOff'), t('Ausblenden')),
@@ -126,7 +131,7 @@ function nodeProps(app) {
     h('button.icon-btn', { onclick: () => supportDialog(app, 'node'), tip: [t('Lager definieren')] }, ic('plus'))));
   if (!sups.length) supSec.appendChild(h('div.small.muted', t('Kein Lager an diesen Knoten.')));
   for (const sp of sups.slice(0, 20)) {
-    supSec.appendChild(h('div.list-item', ic('supportPin'), h('span.t', t('Knoten {id}', { id: sp.node })),
+    supSec.appendChild(h('div.list-item', { style: { cursor: 'pointer' }, onclick: (e) => { if (!e.target.closest('button')) st.select({ supports: [sp.id] }, 'replace'); } }, ic('supportPin'), h('span.t', t('Knoten {id}', { id: sp.node })),
       h('span.meta.hide-hover', dofText(sp.dofs)),
       h('span.acts', h('button.icon-btn.sm', { onclick: () => st.commit(t('Lager löschen'), (m) => { m.supports = m.supports.filter((x) => x.id !== sp.id); }), tip: [t('Löschen')] }, ic('trash')))));
   }
@@ -204,7 +209,7 @@ function lineProps(app) {
   if (sups.length) {
     sec.appendChild(h('div.side-section-title', { style: { marginTop: '10px' } }, ic('supportLine'), t('Linienlager'), h('span.grow')));
     for (const sp of sups.slice(0, 20)) {
-      sec.appendChild(h('div.list-item', ic('supportLine'), h('span.t', t('Linie {id}', { id: sp.line })), h('span.meta.hide-hover', dofText(sp.dofs)),
+      sec.appendChild(h('div.list-item', { style: { cursor: 'pointer' }, onclick: (e) => { if (!e.target.closest('button')) st.select({ supports: [sp.id] }, 'replace'); } }, ic('supportLine'), h('span.t', t('Linie {id}', { id: sp.line })), h('span.meta.hide-hover', dofText(sp.dofs)),
         h('span.acts', h('button.icon-btn.sm', { onclick: () => st.commit(t('Lager löschen'), (m) => { m.supports = m.supports.filter((x) => x.id !== sp.id); }) }, ic('trash')))));
     }
   }
@@ -249,6 +254,65 @@ function domainProps(app) {
   return sec;
 }
 
+/* ---------------- supports ---------------- */
+const DOF_LABELS = ['uX', 'uY', 'uZ', 'φX', 'φY', 'φZ'];
+function supportProps(app) {
+  const st = app.store, s = st.selection;
+  const sups = [...s.supports].map((id) => st.idx.supports.get(id)).filter(Boolean);
+  const sec = h('div.side-section', h('div.side-section-title', ic('supportPin'), t('Lager'), h('span.grow'), h('span.badge', sups.length)));
+  const withDofs = sups.filter((x) => x.dofs);
+  if (withDofs.length) {
+    // common DOF state; clicking toggles fixed ↔ free for all selected node/line supports
+    const g = h('div.dof-grid', { style: { marginBottom: '8px' } });
+    DOF_LABELS.forEach((lab, k) => {
+      const vals = withDofs.map((x) => x.dofs[k]);
+      const fixed = vals.every((v) => v === 'F'), free = vals.every((v) => !v), spring = vals.every((v) => typeof v === 'number' && v > 0);
+      g.appendChild(h('div.dof' + (fixed ? '.on' : spring ? '.spring' : ''), {
+        onclick: () => st.commit(t('Lager ändern'), (m) => { for (const x of m.supports) if (s.supports.has(x.id) && x.dofs) x.dofs[k] = fixed ? 0 : 'F'; }),
+        tip: [lab, t('Klick: fest ↔ frei für alle gewählten Lager')],
+      }, h('span.lab', lab), h('span.small', fixed ? t('fest') : free ? t('frei') : spring ? t('Feder') : t('gemischt'))));
+    });
+    sec.appendChild(g);
+    const nodeSups = withDofs.filter((x) => x.type === 'node');
+    if (nodeSups.length) {
+      sec.appendChild(switchInput(t('Abheben möglich (nur Druck in Z)'), nodeSups.every((x) => x.uplift), (v) =>
+        st.commit(t('Lager ändern'), (m) => { for (const x of m.supports) if (s.supports.has(x.id) && x.type === 'node') x.uplift = v; })));
+    }
+  }
+  const bed = sups.filter((x) => x.type === 'surface');
+  if (bed.length) {
+    sec.appendChild(field('kz', numInput({ value: bed[0].k[2], q: 'bedding', min: 0, onChange: (v) => st.commit(t('Bettung ändern'), (m) => { for (const x of m.supports) if (s.supports.has(x.id) && x.type === 'surface') x.k[2] = v || 0; }) })));
+  }
+  const where = (x) => (x.type === 'node' ? t('Knoten {id}', { id: x.node }) : x.type === 'line' ? t('Linie {id}', { id: x.line }) : t('Fläche {id}', { id: x.domain }));
+  for (const x of sups.slice(0, 15)) sec.appendChild(h('div.list-item', { style: { cursor: 'default' } }, ic(x.type === 'line' ? 'supportLine' : x.type === 'surface' ? 'supportSurface' : 'supportPin'), h('span.t.small', where(x)), h('span.meta', x.dofs ? dofText(x.dofs) : '')));
+  if (sups.length > 15) sec.appendChild(h('div.small.muted', t('… und {n} weitere', { n: sups.length - 15 })));
+  return sec;
+}
+
+/* ---------------- loads ---------------- */
+function loadProps(app) {
+  const st = app.store, s = st.selection;
+  const loads = [...s.loads].map((id) => st.idx.loads.get(id)).filter(Boolean);
+  const sec = h('div.side-section', h('div.side-section-title', ic('loadNode'), t('Lasten'), h('span.grow'), h('span.badge', loads.length)));
+  const upd = (id, fn) => st.commit(t('Last ändern'), (m) => fn(m.loads.find((x) => x.id === id)));
+  // move all selected loads to another load case
+  sec.appendChild(field(t('Lastfall'), selectInput({ value: loads.every((l) => l.lc === loads[0].lc) ? loads[0].lc : '', options: [...(loads.every((l) => l.lc === loads[0].lc) ? [] : [{ value: '', label: t('– verschieden –') }]), ...st.model.loadCases.map((lc) => ({ value: lc.id, label: lc.name }))],
+    onChange: (v) => { if (v === '') return; st.commit(t('Lastfall ändern'), (m) => { for (const x of m.loads) if (s.loads.has(x.id)) x.lc = +v; }); app.setActiveLC(+v); } })));
+  for (const l of loads.slice(0, 12)) {
+    const box = h('div', { style: { padding: '8px 10px', borderRadius: '10px', background: 'var(--surface-2)', marginBottom: '6px' } }, h('div.small', { style: { marginBottom: '6px', fontWeight: 600 } }, describeLoad(app, l)));
+    const num = (label, q, get, set) => field(label, numInput({ value: get(l), q, onChange: (v) => upd(l.id, (x) => set(x, v ?? 0)) }));
+    if (l.type === 'node') ['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'].forEach((k, i) => { if (l.F[i] || i === 2) box.appendChild(num(k, i < 3 ? 'force' : 'moment', (x) => x.F[i], (x, v) => { x.F[i] = v; })); });
+    if (l.type === 'lineDist') { box.appendChild(num('q1', 'lineLoad', (x) => x.q1, (x, v) => { x.q1 = v; })); box.appendChild(num('q2', 'lineLoad', (x) => x.q2, (x, v) => { x.q2 = v; })); }
+    if (l.type === 'linePoint') { box.appendChild(num(l.moment ? 'M' : 'F', l.moment ? 'moment' : 'force', (x) => x.F, (x, v) => { x.F = v; })); box.appendChild(num(t('Position (0…1)'), null, (x) => x.pos, (x, v) => { x.pos = Math.min(1, Math.max(0, v)); })); }
+    if (l.type === 'surface') box.appendChild(num('q', 'areaLoad', (x) => x.q, (x, v) => { x.q = v; }));
+    if (l.type === 'tempLine' || l.type === 'tempDomain') { box.appendChild(num('ΔT', 'temp', (x) => x.dT || 0, (x, v) => { x.dT = v; })); box.appendChild(num('ΔTz', 'temp', (x) => x.dTz || 0, (x, v) => { x.dTz = v; })); }
+    if (l.dir) box.appendChild(field(t('Richtung'), selectInput({ value: l.dir, small: true, options: (l.type === 'surface' ? ['X', 'Y', 'Z', 'z'] : ['X', 'Y', 'Z', 'x', 'y', 'z']).map((d) => ({ value: d, label: d === d.toUpperCase() ? d + ' ' + t('global') : d + ' ' + t('lokal') })), onChange: (v) => upd(l.id, (x) => { x.dir = v; }) })));
+    sec.appendChild(box);
+  }
+  if (loads.length > 12) sec.appendChild(h('div.small.muted', t('… und {n} weitere', { n: loads.length - 12 })));
+  return sec;
+}
+
 function loadList(app, filter, onAdd) {
   const st = app.store;
   const lc = st.idx.loadCases.get(st.activeLC);
@@ -257,7 +321,8 @@ function loadList(app, filter, onAdd) {
     h('button.icon-btn', { onclick: onAdd, tip: [t('Last hinzufügen')] }, ic('plus'))));
   if (!loads.length) box.appendChild(h('div.small.muted', t('Keine Lasten im aktiven Lastfall.')));
   for (const l of loads.slice(0, 30)) {
-    box.appendChild(h('div.list-item', h('span.dot', { style: { background: 'var(--p-rose)' } }), h('span.t.small', describeLoad(app, l)),
+    box.appendChild(h('div.list-item', { style: { cursor: 'pointer' }, onclick: (e) => { if (!e.target.closest('button')) st.select({ loads: [l.id] }, e.shiftKey ? 'add' : 'replace'); }, tip: [t('Klicken wählt die Last aus')] },
+      h('span.dot', { style: { background: 'var(--p-rose)' } }), h('span.t.small', describeLoad(app, l)),
       h('span.acts', h('button.icon-btn.sm', { onclick: () => st.commit(t('Last löschen'), (m) => { m.loads = m.loads.filter((x) => x.id !== l.id); }), tip: [t('Löschen')] }, ic('trash')))));
   }
   return box;

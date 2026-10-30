@@ -221,70 +221,65 @@ svg.ic { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none
 .ribbon-wrap { background: var(--surface); border-bottom: 1px solid var(--border); }
 .ribbon-wrap.collapsed .ribbon { display: none; }
 .tabs {
-  display: flex; gap: 4px; padding: 6px 12px 0; overflow-x: auto; scrollbar-width: none;
+  display: flex; gap: 2px; padding: 4px 10px 0; overflow-x: auto; scrollbar-width: none;
 }
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
   --mod: var(--p-lavender);
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 14px 9px; border: none; background: none; cursor: pointer;
-  border-radius: 10px 10px 0 0; color: var(--text-2); font-weight: 500; white-space: nowrap;
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 11px 6px; border: none; background: none; cursor: pointer;
+  border-radius: 6px 6px 0 0; color: var(--text-2); font-weight: 500; font-size: 13px; white-space: nowrap;
   position: relative; transition: color .15s, background .15s;
 }
 .tab .tab-num {
-  width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center;
-  font-size: 11px; font-weight: 700; color: var(--text);
+  width: 18px; height: 18px; border-radius: 4px; display: grid; place-items: center;
+  font-size: 10.5px; font-weight: 700; color: var(--text);
   background: color-mix(in srgb, var(--mod) 35%, transparent);
 }
 .tab:hover { color: var(--text); background: var(--surface-2); }
 .tab.active { color: var(--text); background: color-mix(in srgb, var(--mod) 16%, var(--surface)); }
 .tab.active::after {
-  content: ''; position: absolute; left: 12px; right: 12px; bottom: 0; height: 3px; border-radius: 3px 3px 0 0;
+  content: ''; position: absolute; left: 8px; right: 8px; bottom: 0; height: 2px; border-radius: 2px 2px 0 0;
   background: var(--mod);
 }
-.tab .tab-state { width: 7px; height: 7px; border-radius: 50%; background: var(--success); margin-left: -2px; }
+.tab .tab-state { width: 6px; height: 6px; border-radius: 50%; background: var(--success); margin-left: -2px; }
 
+/* compact icon-only ribbon – the label is shown in the tooltip */
 .ribbon {
   --mod: var(--p-lavender);
-  display: flex; align-items: stretch; gap: 6px;
-  padding: 8px 12px 8px;
+  display: flex; align-items: center; gap: 0;
+  padding: 4px 8px;
   background: color-mix(in srgb, var(--mod) 7%, var(--surface));
   border-top: 1px solid color-mix(in srgb, var(--mod) 25%, var(--border));
-  overflow-x: auto; min-height: 92px;
+  overflow-x: auto; scrollbar-width: thin;
 }
-.rgroup { display: flex; flex-direction: column; padding: 0 6px; border-right: 1px solid var(--border); }
+.rgroup { display: flex; align-items: center; padding: 0 6px; border-right: 1px solid var(--border); }
+.rgroup:first-child { padding-left: 0; }
 .rgroup:last-child { border-right: none; }
-.rgroup-items { display: flex; gap: 2px; flex: 1; align-items: flex-start; }
-.rgroup-title { font-size: 10.5px; color: var(--text-3); text-align: center; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 4px; white-space: nowrap; }
+.rgroup-items { display: flex; gap: 3px; align-items: center; }
+.rgroup-title { display: none; }
 .rbtn {
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  min-width: 62px; max-width: 86px; padding: 4px 4px 3px;
-  border: none; background: none; cursor: pointer; border-radius: 10px; color: var(--text);
-  font-size: 11.5px; line-height: 1.15; text-align: center;
-  transition: background .12s;
+  width: 32px; height: 32px; flex: none; display: grid; place-items: center; padding: 0;
+  border: 1px solid transparent; cursor: pointer; border-radius: 6px; color: var(--text);
+  background: color-mix(in srgb, var(--mod) 22%, transparent);
+  transition: background .12s, border-color .12s, transform .08s;
 }
-.rbtn .chip {
-  width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
-  background: color-mix(in srgb, var(--mod) 30%, transparent);
-  transition: background .12s, transform .12s, box-shadow .12s;
-}
-.rbtn .chip svg { width: 20px; height: 20px; }
-.rbtn:hover { background: color-mix(in srgb, var(--mod) 12%, transparent); }
-.rbtn:hover .chip { background: color-mix(in srgb, var(--mod) 50%, transparent); }
-.rbtn:active .chip { transform: scale(0.94); }
-.rbtn.active .chip { background: var(--mod); box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--mod); }
-.rbtn.primary .chip { background: var(--accent); color: var(--accent-text); }
-.rbtn.primary:hover .chip { background: var(--accent-2); }
+.rbtn svg { width: 18px; height: 18px; }
+.rbtn:hover { background: color-mix(in srgb, var(--mod) 45%, transparent); }
+.rbtn:active { transform: scale(0.94); }
+.rbtn.active { background: var(--mod); border-color: color-mix(in srgb, var(--mod) 60%, var(--text)); }
+.rbtn.primary { background: var(--accent); color: var(--accent-text); }
+.rbtn.primary:hover { background: var(--accent-2); }
 .rbtn:disabled { opacity: 0.4; cursor: default; }
-.rbtn-label { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.rstack { display: flex; flex-direction: column; gap: 5px; justify-content: center; padding: 0 4px; }
-.rstack .field { min-width: 170px; }
-.ribbon .input, .ribbon .select { padding: 5px 8px; font-size: 12.5px; border-radius: 8px; }
-.ribbon .select { padding-right: 26px; background-position: right 8px center; }
-.ribbon .input-wrap.has-unit .input { padding-right: 34px; }
-.ribbon .input-wrap .unit { right: 8px; font-size: 11.5px; }
-.ribbon .seg button { padding: 3px 9px; }
-.ribbon .btn.sm { padding: 4px 9px; }
+.rstack { display: flex; align-items: center; gap: 6px; padding: 0 2px; }
+.rstack .small { white-space: nowrap; }
+.ribbon .input, .ribbon .select { padding: 4px 7px; font-size: 12.5px; border-radius: 6px; height: 30px; }
+.ribbon .select { padding-right: 24px; background-position: right 7px center; }
+.ribbon .input-wrap.has-unit .input { padding-right: 30px; }
+.ribbon .input-wrap .unit { right: 7px; font-size: 11px; }
+.ribbon .seg { padding: 2px; border-radius: 6px; }
+.ribbon .seg button { padding: 3px 8px; border-radius: 4px; font-size: 12px; }
+.ribbon .icon-btn.sm { border-radius: 6px; }
 .rbtn-sm {
   display: flex; align-items: center; gap: 7px; padding: 4px 9px 4px 5px;
   border: none; background: none; border-radius: 8px; cursor: pointer; font-size: 12px; white-space: nowrap;
