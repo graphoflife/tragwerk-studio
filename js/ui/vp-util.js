@@ -65,14 +65,14 @@ export class LineFactory {
   constructor() { this.mats = new Set(); this.res = new THREE.Vector2(1, 1); }
   setResolution(w, h) { this.res.set(w, h); for (const m of this.mats) m.resolution.set(w, h); }
   // positions: flat array [x,y,z, x,y,z ...] (2 vertices per segment)
-  make(positions, color, width = 2, { opacity = 1, vertexColors = null, dashed = false, depthTest = true } = {}) {
+  make(positions, color, width = 2, { opacity = 1, vertexColors = null, dashed = false, depthTest = true, dashSize = 0.1, gapSize = 0.08 } = {}) {
     if (!positions.length) return null;
     const geo = new LineSegmentsGeometry();
     geo.setPositions(positions);
     const mat = new LineMaterial({
       color: vertexColors ? 0xffffff : color, linewidth: width, vertexColors: !!vertexColors,
       transparent: opacity < 1, opacity, dashed, depthTest,
-      dashSize: 0.1, gapSize: 0.08,
+      dashSize, gapSize,
     });
     if (vertexColors) geo.setColors(vertexColors);
     mat.resolution.copy(this.res);

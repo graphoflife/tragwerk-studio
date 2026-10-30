@@ -49,12 +49,31 @@ Alternativ ohne Actions: *Source: Deploy from a branch*, Branch `main`, Ordner `
 | Auswählen | Klick; Rechteck ziehen (→ Fenster, ← Kreuzen); `Shift` hinzufügen, `Ctrl` umschalten |
 | Ansicht drehen / verschieben / zoomen | rechte Maustaste / mittlere Maustaste / Mausrad (Touch: 1 bzw. 2 Finger) |
 | Zeichnen | `N` Knoten, `L` Linie, `B` Balken, `R` Rechteck, `P` Polygon, `A` Bogen, `M` Messen |
-| Ansichten | `Z` alles, `I` Iso, `T` oben, `F` vorne, `S` Seite, `C` Perspektive, `W` gerendert |
+| Verändern | `V` Verschieben, `K` Kopieren, `D` Drehen (interaktiv), `Shift+M` Mehrfach kopieren (Dialog), `Q` Auswahl |
+| Ansichten | `Z`/`Pos1` alles, `I` Iso, `T` oben, `F` vorne, `S` Seite, `C` Perspektive, `W` gerendert |
 | Bearbeiten | `Ctrl+Z`/`Ctrl+Y`, `Entf` löschen, `H` ausblenden, `Shift+H` isolieren, `Alt+H` alles zeigen |
 | Rechnen | `F5` linear, `Shift+F5` nichtlinear |
 | Sonstiges | `Ctrl+K` Befehlssuche, `Shift+T` Tabellen, `Ctrl+P` Bericht, `Alt+1…9` Module, `F1` Hilfe |
 
-Koordinaten lassen sich beim Zeichnen direkt eintippen: `5 0 3` (absolut), `@2 0 0` (relativ), `4 6` (auf der Arbeitsebene).
+### Punkteingabe wie im CAD
+
+Alle Werkzeuge, die einen Punkt brauchen (Zeichnen, Verschieben, Kopieren, Drehen, Messen), verwenden denselben Mechanismus. Eine Anzeige am Mauszeiger zeigt Fangpunkt, Achse, ΔX/ΔY/ΔZ und die getippte Eingabe.
+
+| Eingabe | Wirkung |
+|---|---|
+| Maus | Fangen an Knoten, Linienmitten, optional Linien (Statusleiste), sonst Raster der Arbeitsebene |
+| `X` / `Y` / `Z` | Auf globale Achse durch den Bezugspunkt beschränken. Fährt man dann einen Knoten oder eine Mitte an, wird dieser Punkt **auf die Achse projiziert** |
+| `Shift+X/Y/Z` | Auf die Ebene senkrecht zur Achse beschränken |
+| `B` | Anderen Bezugspunkt wählen – relative Eingaben und Achsen beziehen sich dann darauf |
+| `3` | Eine Zahl: Distanz entlang der Achse bzw. in Mausrichtung |
+| `2 0 1` | dx dy dz – relativ zum Bezugspunkt (beim ersten Punkt absolut) |
+| `#5 0 3` / `@2 0 0` | absolut bzw. relativ erzwingen |
+| `4 6` | zwei Werte = Koordinaten in der Arbeitsebene |
+| `@5<30` | polar: Länge 5, Winkel 30° in der Arbeitsebene |
+| `0 3 0 x4` | beim Kopieren: 4 Kopien mit diesem Abstand |
+| `Tab` / `Enter` / `Esc` | relativ↔absolut / bestätigen / Eingabe bzw. Achse löschen, dann abbrechen |
+
+**Beispiel:** Stütze wählen, `V`, Fusspunkt anklicken, `X` drücken, die Mitte eines anderen Trägers anfahren und klicken – die Stütze wird entlang X genau auf die Höhe dieser Mitte verschoben. Beim Drehen (`D`) Winkel tippen (`90`, `30 x11` für 11 Kopien) oder zwei Richtungen klicken; `Alt+X/Y/Z` wählt die Drehachse.
 
 ## Einheiten und Konventionen
 

@@ -9,6 +9,7 @@ import { nodeLoadDialog, lineLoadDialog, surfaceLoadDialog, describeLoad } from 
 import { runStatic, runModalDialog, runBucklingDialog, runDesign } from './dialogs/analysis.js';
 import { COMPONENTS, DESIGN_COMPONENTS, caseOptions, caseSummary, componentDef } from './results-data.js';
 import { PALETTE_NAMES } from './vp-util.js';
+import { pointKeys } from './pointinput.js';
 
 const TYPE_LABEL = { beam: 'Balken', truss: 'Fachwerkstab', rib: 'Rippe', rigid: 'Starrstab', spring: 'Feder', plate: 'Platte', shell: 'Schale', membrane: 'Scheibe' };
 const MAT_COLORS = { steel: 'var(--p-sky)', concrete: 'var(--p-slate)', timber: 'var(--p-peach)', aluminium: 'var(--p-teal)', other: 'var(--p-lilac)' };
@@ -69,7 +70,7 @@ function tipRow(iconName, text) {
 function toolOptions(app, tool, opts) {
   const st = app.store, d = app.drawDefaults;
   const wrap = h('div');
-  const titles = { node: t('Knoten setzen'), line: opts.element ? t('{t} zeichnen', { t: t(TYPE_LABEL[opts.element]) }) : t('Linien zeichnen'), rect: opts.domain ? t('{t} zeichnen', { t: t(TYPE_LABEL[opts.domain]) }) : t('Rechteck zeichnen'), polygon: opts.domain ? t('Fläche zeichnen') : t('Polygon zeichnen'), arc: t('Bogen zeichnen'), measure: t('Messen') };
+  const titles = { move: t('Verschieben'), copy: t('Kopieren'), rotate: t('Drehen'), node: t('Knoten setzen'), line: opts.element ? t('{t} zeichnen', { t: t(TYPE_LABEL[opts.element]) }) : t('Linien zeichnen'), rect: opts.domain ? t('{t} zeichnen', { t: t(TYPE_LABEL[opts.domain]) }) : t('Rechteck zeichnen'), polygon: opts.domain ? t('Fläche zeichnen') : t('Polygon zeichnen'), arc: t('Bogen zeichnen'), measure: t('Messen') };
   const sec = h('div.side-section', h('div.side-section-title', ic('sliders'), titles[tool] || tool));
   if (opts.element && ['beam', 'rib', 'truss'].includes(opts.element)) {
     app.ensureDrawDefaults(opts.element);
@@ -88,8 +89,12 @@ function toolOptions(app, tool, opts) {
   if (tool === 'arc') {
     sec.appendChild(field(t('Segmente'), numInput({ value: opts.segments || 8, min: 2, max: 128, onChange: (v) => { app.tools.opts.segments = Math.round(v || 8); } })));
   }
-  sec.appendChild(hintBox(t('Arbeitsebene {p} auf {o}. Knoten werden gefangen; Koordinaten können unten eingetippt werden.', { p: st.view.workplane.plane, o: fmt('len', st.view.workplane.offset) })));
+  sec.appendChild(hintBox(t('Arbeitsebene {p} auf {o}. Knoten, Mitten und (optional) Linien werden gefangen.', { p: st.view.workplane.plane, o: fmt('len', st.view.workplane.offset) })));
   wrap.appendChild(sec);
+  // keyboard cheat sheet of the shared point input
+  const keys = pointKeys(tool);
+  wrap.appendChild(section(t('Punkteingabe'), h('div.list', keys.map(([k, d]) => h('div.list-item', { style: { cursor: 'default', alignItems: 'flex-start' } },
+    h('span.kbd', { style: { flex: 'none', minWidth: '62px', justifyContent: 'center' } }, k), h('span.small', { style: { color: 'var(--text-2)' } }, d))))));
   return wrap;
 }
 

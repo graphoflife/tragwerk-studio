@@ -280,6 +280,7 @@ export class App {
     tg(t('Raster'), 'grid', v.grid.snap, () => store.setView({ grid: { ...v.grid, snap: !v.grid.snap } }), t('Am Raster fangen'));
     tg(t('Knoten'), 'node', v.snapNodes, () => store.setView({ snapNodes: !v.snapNodes }), t('An Knoten fangen'));
     tg(t('Mitte'), 'split', v.snapMid, () => store.setView({ snapMid: !v.snapMid }), t('An Linienmitten fangen'));
+    tg(t('Linie'), 'line', v.snapLine, () => store.setView({ snapLine: !v.snapLine }), t('Am nächstgelegenen Punkt auf Linien fangen'));
     tg(t('Ortho'), 'ortho', v.ortho, () => store.setView({ ortho: !v.ortho }), t('Nur achsparallel zeichnen (auch mit gedrückter Shift-Taste)'));
     tg(`${v.workplane.plane} ${fmtNum(toDisplay('len', v.workplane.offset))} ${unitLabel('len')}`, 'plane', false, () => this.setTab('geometry'), t('Aktive Arbeitsebene'));
     tg(store.model.settings.code === 'SIA' ? 'SIA' : 'Eurocode', store.model.settings.code === 'SIA' ? 'swiss' : 'eu', false, () => this.setTab('design'), t('Aktive Normenfamilie'));
@@ -459,10 +460,11 @@ export class App {
       items.push({ label: t('Eigenschaften'), icon: 'sliders', onClick: () => this.showSide('props') });
       items.push({ label: t('Zoom auf Auswahl'), icon: 'zoomIn', onClick: () => this.zoomSelection() });
       items.push('sep');
+      items.push(it('toolMove'), it('toolCopy'), it('toolRotate'), it('move'), it('mirror'), 'sep');
       if (s.nodes.size) items.push(it('supNode'), it('loadNode'));
       if (s.lines.size) items.push(it('assignLine'), it('releases'), it('split'), it('loadLine'), it('supLine'));
       if (s.domains.size) items.push(it('loadSurface'), it('supSurface'));
-      items.push('sep', it('move'), it('rotate'), it('mirror'), 'sep', it('hideSel'), it('isolateSel'), 'sep', { ...it('delete'), danger: true });
+      items.push('sep', it('hideSel'), it('isolateSel'), 'sep', { ...it('delete'), danger: true });
     } else {
       items.push(it('zoomFit'), it('viewIso'), it('showAll'), it('selectAll'), 'sep', it('generator'), it('palette'));
     }
@@ -699,6 +701,7 @@ export class App {
     const keymap = new Map();
     for (const c of Object.values(this.cmds)) if (c.kbd) keymap.set(c.kbd.toUpperCase(), c);
     keymap.set('CTRL+SHIFT+Z', this.cmds.redo);
+    keymap.set('Z', this.cmds.zoomFit); // X/Y/Z are axis constraints only while a point is being entered
     keymap.set('DELETE', this.cmds.delete);
     keymap.set('BACKSPACE', this.cmds.delete);
     keymap.set('?', this.cmds.help);
@@ -715,12 +718,8 @@ export class App {
       if (anyDialogOpen()) return;
       const tag = e.target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return;
-      if (e.key === 'Enter' && this.tools.key(e)) { e.preventDefault(); return; }
-      // start typing coordinates while drawing
-      if (this.tools.isDrawing() && !e.ctrlKey && !e.metaKey && !e.altKey && /^[\d@.\-]$/.test(e.key)) {
-        this.cmdInput.focus();
-        return;
-      }
+      // active tools get the keys first (point input: X/Y/Z, B, typed coordinates, Enter, Tab …)
+      if (this.tools.key(e)) { e.preventDefault(); return; }
       const name = e.key.length === 1 ? e.key.toUpperCase() : ({ Delete: 'Del' }[e.key] || e.key);
       let combo = (e.ctrlKey || e.metaKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '') + name;
       if (e.altKey && /^Digit[1-9]$/.test(e.code)) {

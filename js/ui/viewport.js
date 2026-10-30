@@ -8,6 +8,7 @@ import { buildResults } from './vp-results.js';
 import { V, P, lineAxes, domainAxes, centroid, modelBounds } from '../core/model.js';
 import { sectionOutline } from '../lib/sections.js';
 import { h } from './dom.js';
+import { t } from '../i18n.js';
 
 const PLANES = {
   XY: { n: [0, 0, 1], map: (u, v, o) => [u, v, o], unmap: (p) => [p[0], p[1]] },
@@ -500,10 +501,24 @@ export class Viewport {
   }
 
   /* ---------------- tool preview ---------------- */
-  setToolPreview({ segments = [], points = [], snap = null, polys = [] } = {}) {
+  // segments: rubber band · ghost: preview of transformed geometry · axes: constraint lines {a, b, color}
+  // guides: dashed helper lines (e.g. projection of the hovered point onto the constraint)
+  setToolPreview({ segments = [], points = [], snap = null, polys = [], ghost = [], axes = [], guides = [] } = {}) {
     const g = this.groups.tool;
     disposeGroup(g, this.lines);
     const C = this.C;
+    for (const ax of axes) {
+      const ln = this.lines.make([...ax.a, ...ax.b], ax.color, 1.6, { depthTest: false, opacity: 0.85 });
+      if (ln) { ln.renderOrder = 38; g.add(ln); }
+    }
+    if (guides.length) {
+      const ln = this.lines.make(guides.flat(), C.mesh, 1.2, { depthTest: false, dashed: true, dashSize: this.sz * 0.35, gapSize: this.sz * 0.25 });
+      if (ln) { ln.renderOrder = 39; g.add(ln); }
+    }
+    if (ghost.length) {
+      const ln = this.lines.make(ghost.flat(), C.sel, 2.6, { depthTest: false, opacity: 0.55 });
+      if (ln) { ln.renderOrder = 39; g.add(ln); }
+    }
     if (segments.length) {
       const ln = this.lines.make(segments.flat(), C.sel, 2.2, { depthTest: false, dashed: false });
       if (ln) { ln.renderOrder = 40; g.add(ln); }
@@ -522,7 +537,7 @@ export class Viewport {
     }
     if (points.length) g.add(makePoints(points.flat(), C.sel, 9, { depthTest: false }));
     if (snap) {
-      const col = { node: 0x2fae7d, mid: 0x8e6cf0, grid: C.sel, free: 0x9aa1b5, line: 0x3b7ee8 }[snap.kind] ?? C.sel;
+      const col = { node: 0x2fae7d, mid: 0x8e6cf0, grid: C.sel, free: 0x9aa1b5, line: 0x3b7ee8, proj: 0xe8a33b, typed: C.sel }[snap.kind] ?? C.sel;
       const p = makePoints(snap.p, col, 18, { ring: true, depthTest: false });
       p.renderOrder = 50;
       g.add(p);
@@ -670,12 +685,14 @@ export class Viewport {
     return [out.x, out.y, out.z];
   }
 
+  // Object snaps (node, line midpoint, nearest point on line) take priority over workplane snaps
+  // (grid, free). Returns { p, kind, obj, label, node?, line? }.
   snap(x, y, { from = null, ortho = false, allowMid = true } = {}) {
     const v = this.store.view;
     const { model, idx } = this.store;
     if (v.snapNodes) {
       const hit = this.pick(x, y, { nodes: true });
-      if (hit) return { p: hit.p, kind: 'node', node: hit.id };
+      if (hit) return { p: hit.p, kind: 'node', node: hit.id, obj: true, label: t('Knoten {id}', { id: hit.id }) };
     }
     if (v.snapMid && allowMid) {
       let bd = 10, best = null;
@@ -686,9 +703,13 @@ export class Viewport {
         const s = this.project(m);
         if (!s.ok) continue;
         const d = Math.hypot(s.x - x, s.y - y);
-        if (d < bd) { bd = d; best = { p: m, kind: 'mid', line: l.id }; }
+        if (d < bd) { bd = d; best = { p: m, kind: 'mid', line: l.id, obj: true, label: t('Mitte Linie {id}', { id: l.id }) }; }
       }
       if (best) return best;
+    }
+    if (v.snapLine) {
+      const hit = this.pick(x, y, { lines: true });
+      if (hit) return { p: hit.p.map((c) => Math.round(c * 1e6) / 1e6), kind: 'line', line: hit.id, obj: true, label: t('Auf Linie {id}', { id: hit.id }) };
     }
     let p = this.workplanePoint(x, y);
     if (!p) return null;
@@ -706,7 +727,27 @@ export class Viewport {
       const k = [0, 1, 2].reduce((a, b) => (Math.abs(d[b]) > Math.abs(d[a]) ? b : a), 0);
       p = [...from]; p[k] += d[k];
     }
-    return { p: p.map((c) => Math.round(c * 1e6) / 1e6), kind };
+    return { p: p.map((c) => Math.round(c * 1e6) / 1e6), kind, obj: false, label: kind === 'grid' ? t('Raster') : t('Arbeitsebene {p}', { p: wp.plane }) };
+  }
+
+  // Point on the line (p0 + s·u) closest to the mouse ray – used for axis constraints
+  closestOnLine(x, y, p0, u) {
+    const ray = this.ray(x, y);
+    const o = [ray.origin.x, ray.origin.y, ray.origin.z], d = [ray.direction.x, ray.direction.y, ray.direction.z];
+    const w0 = V.sub(o, p0);
+    const a = V.dot(d, d), b = V.dot(d, u), c = V.dot(u, u), dd = V.dot(d, w0), e = V.dot(u, w0);
+    const den = a * c - b * b;
+    if (Math.abs(den) < 1e-9) return null;
+    const s = (a * e - b * dd) / den;
+    return V.add(p0, V.mul(u, s));
+  }
+
+  // Intersection of the mouse ray with the plane through p0 with normal n
+  rayPlane(x, y, p0, n) {
+    const ray = this.ray(x, y);
+    const out = new THREE.Vector3();
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...n), new THREE.Vector3(...p0));
+    return ray.intersectPlane(plane, out) ? [out.x, out.y, out.z] : null;
   }
 
   /* ---------------- camera views ---------------- */

@@ -3,6 +3,7 @@ import { t } from '../../i18n.js';
 import { h, ic, openDialog, toast, checkInput } from '../dom.js';
 import { MODULES } from '../commands.js';
 import { EXAMPLES } from '../../examples.js';
+import { pointKeys } from '../pointinput.js';
 
 const MODULE_TEXT = {
   geometry: 'Knoten, Linien, Polygone zeichnen oder generieren',
@@ -89,10 +90,11 @@ export function shortcutsDialog(app) {
     [t('Shift / Ctrl + Klick'), t('Zur Auswahl hinzufügen / umschalten')],
     [t('Rechtsklick'), t('Kontextmenü bzw. Zeichenkette beenden')],
     [t('Doppelklick'), t('Objekt auswählen und Eigenschaften zeigen')],
-    [t('Ziffern tippen'), t('Koordinaten eingeben (x y z, @dx dy dz relativ)')],
   ];
   const body = h('div.grid2', { style: { alignItems: 'start', gap: '20px' } },
-    h('div', h('h4', t('Maus')), h('div.list', mouse.map(([k, v]) => h('div.list-item', { style: { cursor: 'default', alignItems: 'flex-start' } }, h('b.small', { style: { minWidth: '150px' } }, k), h('span.small.muted', v))))),
+    h('div', h('h4', t('Maus')), h('div.list', mouse.map(([k, v]) => h('div.list-item', { style: { cursor: 'default', alignItems: 'flex-start' } }, h('b.small', { style: { minWidth: '150px' } }, k), h('span.small.muted', v)))),
+      h('h4', t('Punkteingabe (Zeichnen, Verschieben, Kopieren, Drehen)')),
+      h('div.list', pointKeys().map(([k, v]) => h('div.list-item', { style: { cursor: 'default', alignItems: 'flex-start' } }, h('span.kbd', { style: { flex: 'none', minWidth: '96px', justifyContent: 'center' } }, k), h('span.small.muted', v))))),
     h('div', h('h4', t('Tastenkürzel')), h('div.list', (groups.k || []).map((c) => h('div.list-item', { style: { cursor: 'default' } }, ic(c.icon), h('span.small', c.label), h('span.kbd', { style: { marginLeft: 'auto' } }, c.kbd))))));
   const intro = h('div',
     h('h4', t('Arbeitsablauf')),

@@ -62,7 +62,7 @@ export function createCommands(app) {
     panel: { label: 'Seitenleiste', desc: 'Eigenschaften-Leiste ein-/ausblenden', icon: 'panel', kbd: 'Ctrl+B', run: () => app.togglePanel() },
 
     // ---- view
-    zoomFit: { label: 'Alles zeigen', desc: 'Auf das ganze Modell zoomen', icon: 'zoomFit', kbd: 'Z', run: () => app.vp.zoomExtents() },
+    zoomFit: { label: 'Alles zeigen', desc: 'Auf das ganze Modell zoomen', icon: 'zoomFit', kbd: 'Home', run: () => app.vp.zoomExtents() },
     viewIso: { label: 'Isometrie', desc: 'Isometrische Ansicht', icon: 'viewIso', kbd: 'I', run: () => app.vp.setView('iso') },
     viewTop: { label: 'Draufsicht', desc: 'Ansicht von oben (X-Y)', icon: 'viewTop', kbd: 'T', run: () => app.vp.setView('top') },
     viewFront: { label: 'Vorderansicht', desc: 'Ansicht von vorne (X-Z)', icon: 'viewFront', kbd: 'F', run: () => app.vp.setView('front') },
@@ -94,7 +94,10 @@ export function createCommands(app) {
     } },
 
     // ---- geometry
-    toolSelect: { label: 'Auswahl', desc: 'Objekte auswählen (Klick / Rechteck)', icon: 'select', kbd: 'V', run: tool('select'), active: isTool('select') },
+    toolSelect: { label: 'Auswahl', desc: 'Objekte auswählen (Klick / Rechteck)', icon: 'select', kbd: 'Q', run: tool('select'), active: isTool('select') },
+    toolMove: { label: 'Verschieben', desc: 'Auswahl interaktiv verschieben: Basispunkt, dann Zielpunkt (X/Y/Z Achse, Projektion auf Fangpunkte, Koordinaten tippen)', icon: 'move', kbd: 'V', run: tool('move'), active: isTool('move') },
+    toolCopy: { label: 'Kopieren', desc: 'Auswahl interaktiv kopieren – mehrfach klicken oder dx dy dz *n für n Kopien', icon: 'copy', kbd: 'K', run: tool('copy'), active: isTool('copy') },
+    toolRotate: { label: 'Drehen', desc: 'Auswahl interaktiv drehen: Drehpunkt, dann Winkel tippen oder Richtungen klicken (Alt+X/Y/Z Drehachse)', icon: 'rotate', kbd: 'D', run: tool('rotate'), active: isTool('rotate') },
     toolOrbit: { label: 'Drehen', desc: 'Ansicht mit der linken Maustaste drehen', icon: 'orbit', kbd: 'O', run: tool('orbit'), active: isTool('orbit') },
     toolNode: { label: 'Knoten', desc: 'Knoten setzen', icon: 'node', kbd: 'N', run: tool('node'), active: isTool('node') },
     toolLine: { label: 'Linie', desc: 'Geometrielinien zeichnen (Kette)', icon: 'line', kbd: 'L', run: tool('line'), active: () => app.tools.id === 'line' && !app.tools.opts.element },
@@ -102,8 +105,8 @@ export function createCommands(app) {
     toolPolygon: { label: 'Polygon', desc: 'Geschlossenes Polygon zeichnen', icon: 'polygon', kbd: 'P', run: tool('polygon'), active: () => app.tools.id === 'polygon' && !app.tools.opts.domain },
     toolArc: { label: 'Bogen', desc: 'Kreisbogen durch 3 Punkte (in Segmente unterteilt)', icon: 'arc', kbd: 'A', run: tool('arc', { segments: 8 }), active: isTool('arc') },
     toolMeasure: { label: 'Messen', desc: 'Abstand zwischen zwei Punkten messen', icon: 'measure', kbd: 'M', run: tool('measure'), active: isTool('measure') },
-    move: { label: 'Verschieben', desc: 'Auswahl verschieben oder mehrfach kopieren', icon: 'move', kbd: 'Shift+M', run: () => need(['nodes', 'lines', 'domains']) && transformDialog(app, 'translate') },
-    rotate: { label: 'Drehen', desc: 'Auswahl um eine Achse drehen oder kopieren', icon: 'rotate', run: () => need(['nodes', 'lines', 'domains']) && transformDialog(app, 'rotate') },
+    move: { label: 'Mehrfach kopieren', desc: 'Verschieben/Kopieren per Dialog: Vektor, Anzahl Kopien, Verbindungsstäbe (z.B. Stützen zwischen Geschossen)', icon: 'layers', kbd: 'Shift+M', run: () => need(['nodes', 'lines', 'domains']) && transformDialog(app, 'translate') },
+    rotate: { label: 'Drehen (Dialog)', desc: 'Auswahl um eine Achse drehen oder rotierend kopieren – numerisch', icon: 'rotate', run: () => need(['nodes', 'lines', 'domains']) && transformDialog(app, 'rotate') },
     mirror: { label: 'Spiegeln', desc: 'Auswahl an einer Ebene spiegeln', icon: 'mirror', run: () => need(['nodes', 'lines', 'domains']) && transformDialog(app, 'mirror') },
     scale: { label: 'Skalieren', desc: 'Auswahl skalieren', icon: 'scale', run: () => need(['nodes', 'lines', 'domains']) && transformDialog(app, 'scale') },
     split: { label: 'Teilen', desc: 'Ausgewählte Linien in gleiche Teile teilen', icon: 'split', run: () => need(['lines'], t('Bitte Linien auswählen.')) && splitDialog(app) },
@@ -199,7 +202,7 @@ export function createCommands(app) {
 export const RIBBON = {
   geometry: [
     { title: 'Zeichnen', items: ['toolSelect', 'toolNode', 'toolLine', 'toolRect', 'toolPolygon', 'toolArc'] },
-    { title: 'Bearbeiten', items: ['move', 'rotate', 'mirror', 'scale', 'split', 'intersect', 'merge', 'delete'] },
+    { title: 'Bearbeiten', items: ['toolMove', 'toolCopy', 'toolRotate', 'move', 'mirror', 'scale', 'split', 'intersect', 'merge', 'delete'] },
     { title: 'Generatoren', items: ['genFrame', 'genTruss', 'genHall', 'genSlab', 'genBuilding', 'genDome'] },
     { title: 'Arbeitsebene', items: [{ custom: 'workplane' }] },
     { title: 'Werkzeuge', items: ['toolMeasure', 'importDxf'] },

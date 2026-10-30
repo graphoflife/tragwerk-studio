@@ -33,6 +33,7 @@ class Store {
       grid: { step: 1, snap: true },
       snapNodes: true,
       snapMid: true,
+      snapLine: false,
       ortho: false,
       selFilter: { nodes: true, lines: true, domains: true },
     };

@@ -363,6 +363,28 @@ svg.ic { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none
 .vp-hint b { color: var(--text); font-weight: 600; }
 .vp-hint .ic { color: var(--accent); }
 .vp-hint:empty { display: none; }
+/* CAD point input HUD (follows the cursor) */
+.pi-hud {
+  position: absolute; z-index: 6; pointer-events: none; min-width: 200px; max-width: 360px;
+  padding: 8px 10px; border-radius: 12px; font-size: 12px; line-height: 1.5;
+  background: var(--surface-glass); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border); box-shadow: var(--shadow);
+}
+.pi-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pi-snap { color: var(--text-2); }
+.pi-coords { font-family: var(--mono); font-size: 11px; color: var(--text-2); }
+.pi-coords b { color: var(--text); font-weight: 600; }
+.pi-chip { display: inline-flex; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; color: #fff; }
+.pi-chip.x { background: #e8475c; } .pi-chip.y { background: #2fae6a; } .pi-chip.z { background: #3b7ee8; }
+.pi-chip.ref { background: var(--warning); }
+.pi-input { display: flex; align-items: center; gap: 6px; margin-top: 4px; padding: 3px 7px; border-radius: 7px; background: var(--surface-2); border: 1px solid var(--border); font-family: var(--mono); font-size: 12px; }
+.pi-prompt { color: var(--accent); font-weight: 700; }
+.pi-typed { color: var(--text); white-space: pre; }
+.pi-typed.bad { color: var(--danger); }
+.pi-ph { color: var(--text-3); font-family: var(--font); font-size: 11.5px; }
+.pi-caret { width: 1.5px; height: 14px; background: var(--accent); animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.pi-mode { margin-left: auto; font-family: var(--font); font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
 .selbox { position: absolute; border: 1.5px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); pointer-events: none; z-index: 4; border-radius: 3px; }
 .selbox.crossing { border-style: dashed; border-color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
 .axis-gizmo { position: absolute; left: 10px; bottom: 10px; width: 92px; height: 92px; pointer-events: none; z-index: 3; }
