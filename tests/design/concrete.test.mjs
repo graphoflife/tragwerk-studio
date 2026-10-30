@@ -1,6 +1,6 @@
 // Tests for js/design/concrete.js – EN 1992-1-1 and SIA 262. Hand calculations in comments.
 import assert from 'node:assert/strict';
-import { designRCSurfaces, designRCBeams, woodArmer, designMN, concreteParams, membraneDesignForces, FLAG_COMPRESSION_REINF, FLAG_SHEAR } from '../../js/design/concrete.js';
+import { designRCSurfaces, designRCBeams, woodArmer, designMN, concreteParams, membraneDesignForces, surfaceLayout, providedAreas, rcSurfaceDetail, FLAG_COMPRESSION_REINF, FLAG_SHEAR, FLAG_MIN } from '../../js/design/concrete.js';
 import { lineModel, lineMesh, lineCase, near, runner } from './helpers.mjs';
 
 const { test, done } = runner('concrete');
@@ -196,6 +196,68 @@ test('T beam, hogging, robustness', () => {
   assert.equal(s.asCorner.length, 0);
   const s2 = slab(0.25, { id: 1, type: 'steel', fy: 235000 }, [0, 0, 0, 50]);
   assert.equal(designRCSurfaces(s2.model, s2.mesh, s2.res, ['LC:1']).asCorner[0], 0);
+});
+
+test('surface layout, governing case, minimum flag, detail trace', () => {
+  // unsymmetric covers / diameters: d = t − c − Øx/2 (x outer), y inner one bar deeper
+  const L = surfaceLayout({ coverB: 0.03, coverT: 0.04, diaX: 0.012, diaY: 0.010 }, 0.25);
+  assert.ok(near(L.d.xb, 0.214, 1e-9) && near(L.d.yb, 0.203, 1e-9) && near(L.d.xt, 0.204, 1e-9) && near(L.d.yt, 0.193, 1e-9));
+  // legacy fields still work
+  assert.ok(near(surfaceLayout({ cover: 0.03, dia: 0.012 }, 0.25).d.yb, 0.202, 1e-9));
+  // Ø12 @ 150 mm = 7.54 cm²/m
+  assert.ok(near(providedAreas({ xb: { dia: 0.012, s: 0.15 } })[0], 7.54e-4, 1e-3));
+  const s = slab(0.25, C(30), [0, 0, 0, 50]);
+  s.res.cases['LC:2'] = { beams: [], shells: Float64Array.from(s.res.cases['LC:1'].shells, (v) => v * 2) };
+  const r = designRCSurfaces(s.model, s.mesh, s.res, ['LC:1', 'LC:2']);
+  assert.equal(r.gov[0], 1, 'LC:2 governs axb');
+  assert.deepEqual(r.keys, ['LC:1', 'LC:2']);
+  assert.equal(r.domains.length, 1);
+  assert.ok(near(r.domains[0].max[0], r.asCorner[0], 1e-12) && r.domains[0].maxCase[0] === 1);
+  // small moment → minimum reinforcement governs and is flagged
+  const sm = slab(0.25, C(30), [0, 0, 0, 2]);
+  const rm = designRCSurfaces(sm.model, sm.mesh, sm.res, ['LC:1']);
+  assert.ok(rm.flags[0] & FLAG_MIN);
+  assert.ok(rm.domains[0].minGoverns[0]);
+  const det = rcSurfaceDetail(s.model, s.mesh, s.res, ['LC:1', 'LC:2'], 0, 0);
+  assert.equal(det.cases.length, 2);
+  assert.equal(det.gov[0], 'LC:2');
+  assert.ok(near(det.as[0], r.asCorner[0], 1e-9));
+});
+
+test('Plattenbalken: rib in a slab gets the effective flange and the slab moment', () => {
+  // slab 6 × 4 m (1 m quads), rib along y = 2 from x = 0 to 6, RECT 0.3 × 0.6, C30/37
+  const nodes = [{ id: 1, x: 0, y: 0, z: 0 }, { id: 2, x: 6, y: 0, z: 0 }, { id: 3, x: 6, y: 4, z: 0 }, { id: 4, x: 0, y: 4, z: 0 }, { id: 5, x: 0, y: 2, z: 0 }, { id: 6, x: 6, y: 2, z: 0 }];
+  const model = {
+    settings: {}, nodes, materials: [C(30)], sections: [{ id: 1, shape: 'RECT', dims: { h: 0.6, b: 0.3 } }],
+    domains: [{ id: 1, nodes: [1, 2, 3, 4], type: 'plate', material: 1, thickness: 0.2 }],
+    lines: [{ id: 1, n1: 5, n2: 6, element: { type: 'rib', material: 1, section: 1, beta: 0 } }],
+    loadCases: [{ id: 1 }], combinations: [], loadGroups: [],
+  };
+  const X = [];
+  for (let j = 0; j <= 4; j++) for (let i = 0; i <= 6; i++) X.push(i, j, 0);
+  const id = (i, j) => j * 7 + i;
+  const ax = { ex: [1, 0, 0], ey: [0, 1, 0], ez: [0, 0, 1] };
+  const shells = [];
+  for (let j = 0; j < 4; j++) for (let i = 0; i < 6; i++) shells.push({ nodes: [id(i, j), id(i + 1, j), id(i + 1, j + 1), id(i, j + 1)], domain: 1, type: 'plate', material: 1, thickness: 0.2, ...ax });
+  const beams = Array.from({ length: 6 }, (_, i) => ({ n1: id(i, 2), n2: id(i + 1, 2), line: 1, t0: i / 6, t1: (i + 1) / 6, ...ax, ey: [0, 1, 0] }));
+  const mesh = { nodes: Float64Array.from(X), beams, shells };
+  const res = lineCase(mesh, 6, { My: () => 100 });
+  const sh = new Float64Array(shells.length * 32);
+  for (let k = 0; k < shells.length * 4; k++) sh[k * 8 + 3] = 10; // mx = 10 kNm/m along the rib
+  res.shells = sh;
+  const [r] = designRCBeams(model, mesh, { cases: { 'LC:1': res } }, ['LC:1']);
+  // bi = 2 − 0.15 = 1.85 m, l0 = 6 m: beff,i = min(0.2·1.85 + 0.6, 1.2, 1.85) = 0.97 → beff = 2.24 m
+  assert.ok(near(r.tBeam.beff, 2.24, 1e-6), `beff=${r.tBeam.beff}`);
+  assert.equal(r.section.shape, 'T');
+  assert.ok(near(r.section.hf, 0.2, 1e-9));
+  // M_T = 100 + 10 kNm/m · 2.24 m = 122.4 kNm
+  assert.ok(near(r.env.MyMax[3], 122.4, 1e-6), `M=${r.env.MyMax[3]}`);
+  assert.ok(near(r.env.MyRibMax[3], 100, 1e-9));
+  // opt-out: plain rectangle, rib moment only
+  model.lines[0].element.design = { rc: { tBeam: false } };
+  const [r2] = designRCBeams(model, mesh, { cases: { 'LC:1': res } }, ['LC:1']);
+  assert.equal(r2.tBeam, null);
+  assert.ok(near(r2.env.MyMax[3], 100, 1e-9) && r2.AsBot[3] > r.AsBot[3] * 0.7);
 });
 
 done();

@@ -1,6 +1,6 @@
 // Ready-made example models (built programmatically, so they always match the current data format).
 import { t } from './i18n.js';
-import { createModel, addNode, addLine, nextId, defaultLineElement, SUPPORT_PRESETS } from './core/model.js';
+import { createModel, addNode, addLine, addDomain, nextId, defaultLineElement, SUPPORT_PRESETS } from './core/model.js';
 import { GENERATORS, ensureMat, ensureSec, addCombos } from './core/generators.js';
 
 function base(name, desc) {
@@ -123,6 +123,31 @@ export const EXAMPLES = [
     id: 'slab', name: 'Flachdecke auf Stützen', icon: 'slab', mod: 'mint', view: 'iso', tags: ['Platte', 'Stahlbeton'],
     desc: 'Punktgestützte Stahlbetondecke 18 × 12 m – Momente mx/my und Bewehrung.',
     build: () => gen('slab', t('Flachdecke 18 × 12 m'), { Lx: 18, Ly: 12, t: 0.26, sup: 'columns', cx: 3, cy: 2, q: -3, g: -1.5 }, t('Flachdecke C30/37 auf 12 Stützen.')),
+  },
+  {
+    id: 'tbeam', name: 'Plattenbalkendecke', icon: 'rib', mod: 'mint', view: 'iso', tags: ['Plattenbalken', 'Stahlbeton'],
+    desc: 'Decke auf drei Unterzügen: Mittelrippe als Plattenbalken (T), Randrippen als L-Querschnitt.',
+    build() {
+      const m = base(t('Plattenbalkendecke 12 × 10 m'), t('Platte 22 cm auf Unterzügen 30/60 cm (C30/37), Spannweite der Unterzüge 10 m. Die Balkenbemessung setzt die mitwirkende Plattenbreite an.'));
+      const g = stdGroups(m);
+      const G = lc(m, t('Eigengewicht'), g.G, true), G2 = lc(m, t('Belag'), g.G), Q = lc(m, t('Nutzlast'), g.Q);
+      const mat = ensureMat(m, 'C30/37'), rib = ensureSec(m, 'RECT 300×600', { shape: 'RECT', dims: { h: 0.6, b: 0.3 } });
+      const P = [[0, 0], [6, 0], [12, 0], [12, 10], [6, 10], [0, 10]].map(([x, y]) => addNode(m, [x, y, 0]));
+      const d = addDomain(m, P, { type: 'plate', material: mat, thickness: 0.22, rc: { coverB: 0.03, coverT: 0.03, diaX: 0.012, diaY: 0.01, fyk: 500000 } });
+      const ribEl = () => ({ ...defaultLineElement('rib', mat, rib), design: { rc: { cover: 0.035, dia: 0.022, diaStirrup: 0.01, fyk: 500000, tBeam: true, l0Factor: 1 } } });
+      for (const [a, b2] of [[P[0], P[5]], [P[2], P[3]]]) {
+        const l = m.lines.find((x) => (x.n1 === a && x.n2 === b2) || (x.n1 === b2 && x.n2 === a));
+        l.element = ribEl();
+      }
+      addLine(m, P[1], P[4], ribEl());
+      P.forEach((n) => sup(m, n, 'pinned', { size: 0.3 }));
+      ld(m, { lc: G2, type: 'surface', domain: d, dir: 'Z', q: -1.8, projected: false });
+      ld(m, { lc: Q, type: 'surface', domain: d, dir: 'Z', q: -3.0, projected: false });
+      m.settings.meshSize = 0.5;
+      m.settings.beamDivisions = 4;
+      addCombos(m);
+      return m;
+    },
   },
   {
     id: 'plate', name: 'Allseitig gelagerte Platte', icon: 'plate', mod: 'mint', tags: ['Platte', 'Validierung'],

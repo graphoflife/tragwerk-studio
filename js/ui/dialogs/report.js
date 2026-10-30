@@ -7,6 +7,7 @@ import { caseLabel, getCase, caseSummary } from '../results-data.js';
 import { lineForces } from '../../fem/index.js';
 import { describeLoad } from './loads.js';
 import { designCaseKeys } from './analysis.js';
+import { checkName, layerName, meshText, slabSuggestion, beamSuggestion, barsText, stirrupText, POS_NAMES } from '../design-text.js';
 
 const CHAPTERS = [
   ['cover', 'Projektangaben'], ['views', 'Ansichten'], ['materials', 'Materialien'], ['sections', 'Querschnitte'],
@@ -165,20 +166,33 @@ function buildHtml(app, on) {
     const util = (list, title) => {
       parts.push(`<p><b>${title}</b></p>`);
       parts.push(table([t('Stab'), 'η [%]', t('massgebend'), t('Kombination'), t('Details')],
-        [...list].sort((a, b) => b.eta - a.eta).slice(0, 300).map((r) => [r.line, ((r.eta ?? 0) * 100).toFixed(1), r.governing?.check || '', caseLabel(st, r.governing?.caseKey), r.checks?.[r.governing?.check]?.detail || ''])));
+        [...list].sort((a, b) => b.eta - a.eta).slice(0, 300).map((r) => [r.line, ((r.eta ?? 0) * 100).toFixed(1), r.governing ? checkName(r.governing.check) : '', caseLabel(st, r.governing?.caseKey), r.checks?.[r.governing?.check]?.detail || ''])));
     };
+    const cd = m.settings.code === 'SIA' ? 'SIA' : 'EC';
     if (R.steel) util(R.steel, t('Stahlnachweise'));
     if (R.timber) util(R.timber, t('Holznachweise'));
-    if (R.rc?.asCorner) {
-      const A = R.rc.asCorner, mx = [0, 0, 0, 0];
-      for (let i = 0; i < A.length; i++) mx[i % 4] = Math.max(mx[i % 4], A[i]);
-      parts.push(`<p><b>${t('Stahlbeton Flächen – maximale erforderliche Bewehrung')}</b></p>`);
-      parts.push(table(['axb', 'ayb', 'axt', 'ayt'].map((x) => `${x} [${u('reinf')}]`), [mx.map((v) => num('reinf', v))]));
+    if (R.rc?.domains?.length) {
+      parts.push(`<p><b>${t('Stahlbeton Flächen – maximale erforderliche Bewehrung (inkl. Mindestbewehrung, Wood-Armer)')}</b></p>`);
+      parts.push(table([t('Fläche'), t('Lage'), 'd [mm]', `as,min [${u('reinf')}]`, `${t('erf. max')} [${u('reinf')}]`, t('Vorschlag'), t('massgebend')],
+        R.rc.domains.flatMap((d) => ['axb', 'ayb', 'axt', 'ayt'].map((lay, j) => [d.id, `${lay} (${layerName(lay)})`, Math.round(d.layout.d[lay.slice(1)] * 1000), num('reinf', d.asMin[j]), num('reinf', d.max[j]),
+          d.max[j] > 0 ? meshText(slabSuggestion(d.max[j], lay, d.layout, cd)) : '–', d.maxCase[j] >= 0 ? caseLabel(st, R.rc.keys[d.maxCase[j]]) : '']))));
+      const sh = R.rc.domains.map((d) => [d.id, (d.vMax * 100).toFixed(0), d.vMax > 1 ? t('Schubbewehrung erforderlich') : t('ohne Schubbewehrung ok')]);
+      parts.push(table([t('Fläche'), 'max. vEd/vRd,c [%]', t('Ergebnis')], sh));
+    }
+    if (R.punching?.items?.length) {
+      parts.push(`<p><b>${t('Durchstanzen')}</b></p>`);
+      parts.push(table([t('Knoten'), t('Lage'), 'd [mm]', `VEd [${u('force')}]`, 'η [%]', t('Ergebnis')],
+        R.punching.items.map((it) => [it.node, t(POS_NAMES[it.type]), Math.round(it.d * 1000), num('force', it.VEd), (it.eta * 100).toFixed(0),
+          it.fail ? t('Platte verstärken / Stütze vergrössern') : it.needsReinf ? t('Durchstanzbewehrung erforderlich') : t('ohne Bewehrung erfüllt')])));
     }
     if (R.rcBeams?.length) {
       parts.push(`<p><b>${t('Stahlbeton Balken')}</b></p>`);
-      parts.push(table([t('Stab'), `As unten [${u('reinfBeam')}]`, `As oben [${u('reinfBeam')}]`, `asw [${u('reinf')}]`, 'OK'],
-        R.rcBeams.map((b) => [b.line, num('reinfBeam', Math.max(0, ...b.AsBot)), num('reinfBeam', Math.max(0, ...b.AsTop)), num('reinf', Math.max(0, ...b.Asw)), b.ok === false ? '✗' : '✓'])));
+      parts.push(table([t('Stab'), t('Querschnitt'), `As unten [${u('reinfBeam')}]`, `As oben [${u('reinfBeam')}]`, `asw [${u('reinf')}]`, t('Vorschlag'), 'OK'],
+        R.rcBeams.map((b) => {
+          const sg = beamSuggestion(b, cd);
+          return [b.line, b.tBeam ? `${t('Plattenbalken')} beff = ${fmtNum(b.tBeam.beff, 3)} m` : `${Math.round(b.b * 1000)}×${Math.round(b.h * 1000)}`, num('reinfBeam', Math.max(0, ...b.AsBot)), num('reinfBeam', Math.max(0, ...b.AsTop)), num('reinf', Math.max(0, ...b.Asw)),
+            `${barsText(sg.bot)} / ${barsText(sg.top)} · ${stirrupText(sg.stirrups)}`, b.ok === false ? '✗' : '✓'];
+        })));
     }
   }
   parts.push(`<p class="meta" style="margin-top:28px">${t('Erstellt mit Tragwerk Studio')} · ${new Date().toLocaleString()}</p>`);

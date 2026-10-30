@@ -1,7 +1,7 @@
 # Tragwerk Studio – 3D-FEM im Browser
 
 Modulare Finite-Elemente-Software für Tragwerke, angelehnt an den Arbeitsablauf von AxisVM:
-Geometrie → Elemente → Lasten → Netz → Statik → Schwingung → Knicken → Bemessung → Bericht.
+Geometrie → Elemente → Lasten → Netz → Statik → Knicken → Schwingung → Stahlbeton → Stahl → Holz → Bericht.
 Läuft vollständig im Browser als statische Website (z.B. GitHub Pages) – keine Installation, kein Server, keine Build-Tools.
 
 > Unabhängiges Projekt, nicht mit InterCAD/AxisVM verbunden.
@@ -14,13 +14,15 @@ Läuft vollständig im Browser als statische Website (z.B. GitHub Pages) – kei
 | **2 Elemente** | Material- und Querschnittsbibliothek (S235–S460, C12/15–C50/60, C16–GL32h, Aluminium; IPE, HEA, HEB, HEM, IPN, UPN, SHS, RHS, CHS, L + parametrische Querschnitte); Balken, Fachwerkstäbe (auch nur Zug/Druck), Rippen, Starrstäbe, Federn; Stabendgelenke; Platten, Schalen, Scheiben mit Öffnungen; Knoten-, Linien- und Flächenlager (Federn, Bettung, abhebend) |
 | **3 Lasten** | Lastfälle und Lastgruppen (γ/ψ), Eigengewicht, Knotenlasten, Gleich-/Trapez-/Teillasten (global, lokal, projiziert), Einzellasten und -momente, Flächenlasten, Temperatur (gleichmässig + Gradient), Stützensenkung, Schnee & Wind (vereinfacht); Kombinationen von Hand oder automatisch nach **EN 1990** bzw. **SIA 260** |
 | **4 Netz** | Automatische Vernetzung (strukturiert oder Delaunay → Vierecke), konforme Netze zwischen Wänden, Decken, Unterzügen und Stützen; Modellprüfung |
-| **5 Statik** | Lineare Statik, Superposition, Umhüllende; nichtlinear: Theorie II. Ordnung (P-Δ), Zug-/Druckstäbe, abhebende Lager. Ergebnisse: Verformung, Verschiebungen, Stabschnittgrössen N/Vy/Vz/T/My/Mz, Flächenschnittgrössen nx…vy, Hauptwerte, Spannungen, Auflagerkräfte |
-| **6 Schwingung** | Eigenfrequenzen und -formen (animiert), Massenbeteiligung; Antwortspektrenverfahren nach **EN 1998-1** bzw. **SIA 261** (SRSS/CQC) |
-| **7 Knicken** | Lineare Stabilitätsanalyse (Stäbe und Schalen), kritische Lastfaktoren αcr und Knickformen |
-| **8 Bemessung** | Stahl **EN 1993-1-1 / SIA 263** (Querschnittsklassen, Festigkeit, Biegeknicken, Biegedrillknicken, Interaktion), Stahlbeton **EN 1992-1-1 / SIA 262** (Flächen nach Wood-Armer, Balken mit Biege- und Schubbewehrung), Holz **EN 1995-1-1 / SIA 265** |
-| **9 Bericht** | Tabellenbrowser (bearbeitbar, sortierbar, CSV/Excel), Druck-/PDF-Bericht mit Ansichten, Modell als JSON speichern/laden, Screenshots |
+| **5 Statik** | Lineare Statik, Superposition, Umhüllende; nichtlinear: Theorie II. Ordnung (P-Δ), Zug-/Druckstäbe, abhebende Lager. Ergebnisse: Verformung, Verschiebungen eX…eR, Stabschnittgrössen Nx/Vy/Vz/Tx/My/Mz, Flächenschnittgrössen nx…vy, Hauptwerte, Spannungen, Auflagerkräfte |
+| **6 Knicken** | Lineare Stabilitätsanalyse (Stäbe und Schalen), kritische Lastfaktoren αcr und Knickformen |
+| **7 Schwingung** | Eigenfrequenzen und -formen (animiert), Massenbeteiligung; Antwortspektrenverfahren nach **EN 1998-1** bzw. **SIA 261** (SRSS/CQC) |
+| **8 Stahlbeton** | **EN 1992-1-1 / SIA 262**: Bewehrungsparameter je Fläche (Deckung oben/unten, Ø je Richtung, Stahlsorte) mit Skizze der statischen Höhen; Flächenbemessung nach Wood-Armer mit **axb, ayb, axt, ayt** als *erforderlich / vorhanden / fehlend* (vorgegebene Grundbewehrung Ø/s, Zulagen); Bewehrungsvorschlag (z.B. Ø12/150); Querkraft vEd/vRd,c; **Durchstanzen** an Stützen und Punktlagern (Innen-/Rand-/Eckstütze automatisch); **Plattenbalken**: Rippen in der Plattenebene mit mitwirkender Breite beff und den Plattenschnittgrössen innerhalb beff; Balken mit Längs- und Bügelbewehrung, Stabvorschlag (z.B. 8 Ø25, 2 Lagen) und Querschnittsskizze; **Bemessungsprotokoll** (was wurde wie gerechnet, massgebende Kombination, Ort) |
+| **9 Stahl** | **EN 1993-1-1 / SIA 263**: Querschnittsklassen, Festigkeit, Biegeknicken, Biegedrillknicken, Interaktion; Ausnutzung gesamt oder je Nachweis; Detailfenster mit Schnittgrössenverläufen und allen Nachweisen |
+| **10 Holz** | **EN 1995-1-1 / SIA 265**, gleiche Darstellung wie Stahl |
+| **11 Bericht** | Tabellenbrowser (bearbeitbar, sortierbar, CSV/Excel), Druck-/PDF-Bericht mit Ansichten, Modell als JSON speichern/laden, Screenshots |
 
-Weiteres: Hell-/Dunkelmodus, Deutsch/Englisch, wählbare Einheiten, Rückgängig/Wiederholen, Autosave im Browser, Befehlssuche (`Ctrl+K`), Kontextmenüs, Tooltips mit Tastenkürzeln, 12 Beispielmodelle.
+Weiteres: Hell-/Dunkelmodus, Deutsch/Englisch, wählbare Einheiten, Rückgängig/Wiederholen, Autosave im Browser, Befehlssuche (`Ctrl+K`), Kontextmenüs, Tooltips mit Tastenkürzeln, 13 Beispielmodelle (u.a. Flachdecke mit Durchstanzen, Plattenbalkendecke).
 
 ## Starten
 
@@ -56,7 +58,8 @@ Die obere Leiste vereint Module, Datei-Menü (mit Modellname), Befehlssuche und 
 | Ansichten | `Z`/`Pos1` alles, `I` Iso, `T` oben, `F` vorne, `S` Seite, `C` Perspektive, `W` gerendert |
 | Bearbeiten | `Ctrl+Z`/`Ctrl+Y`, `Entf` löschen, `H` ausblenden, `Shift+H` isolieren, `Alt+H` alles zeigen |
 | Rechnen | `F5` linear, `Shift+F5` nichtlinear |
-| Sonstiges | `Ctrl+K` Befehlssuche, `Shift+T` Tabellen, `Ctrl+P` Bericht, `Alt+1…9` Module, `F1` Hilfe |
+| Ergebnisse abfragen | Mauszeiger über Stab/Fläche zeigt die Werte; **Doppelklick** in den Bemessungsmodulen öffnet die Berechnung im Detail (Stahl-/Holzstab: alle Nachweise; Betonbalken: Verläufe und Querschnitt; Platte: Wood-Armer-Momente und Bewehrung je Kombination) |
+| Sonstiges | `Ctrl+K` Befehlssuche, `Shift+T` Tabellen, `Ctrl+P` Bericht, `Alt+1…9`, `Alt+0` Module, `F1` Hilfe |
 
 ### Punkteingabe wie im CAD
 
@@ -95,7 +98,7 @@ js/ui/                Oberfläche: App, Ribbon, 3D-Viewport (three.js), Werkzeug
 js/core/              Modell, Undo/Redo, Einheiten, Generatoren, Analyse-Runner (Web Worker)
 js/mesh/              Vernetzung (CDT, strukturierte Netze)
 js/fem/               FE-Löser: Balken (Timoshenko), MITC4/QM6-Schale, Skyline-LDLᵀ, Eigenwerte, Knicken, Spektrum
-js/design/            Bemessung EC/SIA und Lastkombinationen
+js/design/            Bemessung EC/SIA (Stahl, Holz, Stahlbeton, Plattenbalken, Durchstanzen, Bewehrungsvorschlag) und Lastkombinationen
 js/lib/               Material- und Querschnittsbibliothek
 tests/                Node-Tests (node tests/run-all.mjs)
 vendor/three/         three.js r160 (MIT)
@@ -109,7 +112,8 @@ Die Nachweise sind sorgfältig umgesetzt und durch Tests gegen Handrechnungen ge
 
 - **SIA 260:** ψ-Beiwerte der Lastgruppen (in den Lastgruppen editierbar).
 - **SIA 261:** Spektrumsparameter/Ziffern; Baugrundklasse F wird mit Parametern D gerechnet; vertikales Spektrum als 0.7·agd angenommen.
-- **SIA 262:** Druckzonenhöhe 0.85·x, Grenze x/d ≤ 0.35, kc = 0.55, cot α = 1.0 (Standard).
+- **SIA 262:** Druckzonenhöhe 0.85·x, Grenze x/d ≤ 0.35, kc = 0.55, cot α = 1.0 (Standard); Durchstanzen nach Näherungsstufe 1 (rs = 0.22·L, ke 0.9/0.7/0.65); mitwirkende Breite wie EN 1992-1-1 5.3.2.1.
+- **Stahlbeton allgemein:** nicht nachgewiesen werden Rissbreiten, Verformungen im gerissenen Zustand, die Bemessung von Schub- und Durchstanzbewehrung sowie Verankerung/Abstufung. Bewehrungsvorschläge decken das Maximum je Fläche bzw. Stab ab.
 - **SIA 263:** Interaktionsformel mit ω-Beiwerten und Ziffernangaben.
 - **SIA 265:** Lastdauerbeiwert ηt = 1.0 (anpassbar über die Lastgruppe).
 

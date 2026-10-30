@@ -11,10 +11,10 @@ export const COMPONENTS = [
   { key: 'fX', group: 'Verschiebungen', label: 'φX', q: 'rot', kind: 'nodal', f: (d, i) => d[6 * i + 3] },
   { key: 'fY', group: 'Verschiebungen', label: 'φY', q: 'rot', kind: 'nodal', f: (d, i) => d[6 * i + 4] },
   { key: 'fZ', group: 'Verschiebungen', label: 'φZ', q: 'rot', kind: 'nodal', f: (d, i) => d[6 * i + 5] },
-  { key: 'N', short: 'N', group: 'Stabschnittgrössen', label: 'N (Normalkraft)', q: 'force', kind: 'beam', plane: 'z', sign: 1 },
+  { key: 'N', short: 'Nx', group: 'Stabschnittgrössen', label: 'Nx (Normalkraft)', q: 'force', kind: 'beam', plane: 'z', sign: 1 },
   { key: 'Vy', group: 'Stabschnittgrössen', label: 'Vy', q: 'force', kind: 'beam', plane: 'y', sign: 1 },
   { key: 'Vz', group: 'Stabschnittgrössen', label: 'Vz', q: 'force', kind: 'beam', plane: 'z', sign: 1 },
-  { key: 'T', short: 'T', group: 'Stabschnittgrössen', label: 'T (Torsion)', q: 'moment', kind: 'beam', plane: 'z', sign: 1 },
+  { key: 'T', short: 'Tx', group: 'Stabschnittgrössen', label: 'Tx (Torsion)', q: 'moment', kind: 'beam', plane: 'z', sign: 1 },
   { key: 'My', group: 'Stabschnittgrössen', label: 'My', q: 'moment', kind: 'beam', plane: 'z', sign: -1 },
   { key: 'Mz', group: 'Stabschnittgrössen', label: 'Mz', q: 'moment', kind: 'beam', plane: 'y', sign: -1 },
   { key: 'nx', group: 'Flächenschnittgrössen', label: 'nx', q: 'lineForce', kind: 'shell', c: 0 },
@@ -37,6 +37,7 @@ export const COMPONENTS = [
   { key: 'R', group: 'Auflager', label: 'Auflagerkräfte', q: 'force', kind: 'reaction', icon: 'reactions' },
 ];
 
+export const UTIL_CHECKS = ['N', 'Vz', 'Vy', 'My', 'Mz', 'M+N', 'FB-y', 'FB-z', 'LTB', 'Interaction', 'T'];
 export const DESIGN_COMPONENTS = {
   steel: [{ key: 'eta', label: 'Ausnutzung η', q: 'percent', kind: 'util' }],
   timber: [{ key: 'eta', label: 'Ausnutzung η', q: 'percent', kind: 'util' }],
@@ -45,6 +46,8 @@ export const DESIGN_COMPONENTS = {
     { key: 'ayb', label: 'ayb (y unten)', q: 'reinf', kind: 'rc', c: 1 },
     { key: 'axt', label: 'axt (x oben)', q: 'reinf', kind: 'rc', c: 2 },
     { key: 'ayt', label: 'ayt (y oben)', q: 'reinf', kind: 'rc', c: 3 },
+    { key: 'vRatio', label: 'Querkraft vEd/vRd,c', q: 'percent', kind: 'shear' },
+    { key: 'punch', label: 'Durchstanzen', q: 'percent', kind: 'punch' },
     { key: 'AsBot', label: 'Balken As unten', q: 'reinfBeam', kind: 'rcbeam' },
     { key: 'AsTop', label: 'Balken As oben', q: 'reinfBeam', kind: 'rcbeam' },
     { key: 'Asw', label: 'Bügel asw', q: 'reinf', kind: 'rcbeam' },

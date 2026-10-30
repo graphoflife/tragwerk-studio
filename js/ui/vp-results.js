@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import { paletteColors, colorAt, label, ArrowBatch } from './vp-util.js';
 import { componentDef, getCase, DESIGN_COMPONENTS, caseLabel } from './results-data.js';
+import { providedAreas } from '../design/concrete.js';
+import { slabSuggestion, beamSuggestion, meshText, barsText, stirrupText, layerName, checkName } from './design-text.js';
 import { fmt } from '../core/units.js';
 import { t } from '../i18n.js';
 
@@ -419,79 +421,180 @@ function buildUtil(vp, group, mesh) {
   const list = rv.kind === 'steel' ? st.results.steel : st.results.timber;
   if (!list) return { title: t('Keine Ergebnisse'), empty: true };
   const { idx } = st;
+  // component 'eta' = governing check, otherwise one check (AxisVM: separate result components per check)
+  const check = rv.component && rv.component !== 'eta' ? rv.component : null;
+  const etaOf = (r) => (check ? r.checks?.[check]?.eta : r.eta);
   const cols = paletteColors('utilization');
-  const segsOk = [], colors = [];
+  const segsOk = [], colors = [], segsNa = [];
   const showLabels = st.view.labelsValues;
   // label only the most utilised members when there are many
-  const sortedEta = list.map((r) => r.eta ?? 0).sort((a, b) => b - a);
+  const sortedEta = list.map((r) => etaOf(r) ?? 0).sort((a, b) => b - a);
   const labelMin = list.length > 40 ? Math.max(sortedEta[Math.min(39, sortedEta.length - 1)], sortedEta[0] * 0.6) : 0;
-  let maxEta = 0, n = 0;
+  let maxEta = 0, n = 0, nFail = 0;
   for (const r of list) {
     const l = idx.lines.get(r.line);
     if (!l) continue;
     const a = idx.nodes.get(l.n1), b = idx.nodes.get(l.n2);
-    const eta = r.eta ?? 0;
+    const eta = etaOf(r);
+    if (eta == null) { segsNa.push(a.x, a.y, a.z, b.x, b.y, b.z); continue; }
     maxEta = Math.max(maxEta, eta);
+    if (eta > 1) nFail++;
     const c = colorAt(cols, Math.min(1, eta / 1.0), 0);
     segsOk.push(a.x, a.y, a.z, b.x, b.y, b.z);
     colors.push(c.r, c.g, c.b, c.r, c.g, c.b);
-    if (showLabels && eta >= labelMin && n++ < 60) {
+    if ((showLabels || eta > 1) && eta >= labelMin && n++ < 60) {
       group.add(label(`${(eta * 100).toFixed(0)}%`, [(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2], 'big ' + (eta > 1 ? 'neg' : '')));
     }
   }
   ghostMesh(vp, group, mesh);
   const ln = vp.lines.make(segsOk, 0xffffff, 6, { vertexColors: colors });
   if (ln) group.add(ln);
-  const nFail = list.filter((r) => r.eta > 1).length;
+  const na = vp.lines.make(segsNa, vp.C.ghost, 3);
+  if (na) group.add(na);
   return {
-    title: t('Ausnutzung η'), sub: rv.kind === 'steel' ? t('Stahlbemessung') : t('Holzbemessung'),
+    title: check ? `η ${checkName(check)}` : t('Ausnutzung η'), sub: (rv.kind === 'steel' ? t('Stahlbemessung') : t('Holzbemessung')) + (check ? '' : ' · ' + t('massgebender Nachweis')),
     min: 0, max: 1, palette: 'utilization', levels: 0, q: 'percent',
     extremes: [[t('max. η'), (maxEta * 100).toFixed(1) + ' %'], [t('Nicht erfüllt'), String(nFail)]],
   };
 }
 
 /* ---------------- design: RC ---------------- */
+const RC_MODE_SUB = { req: 'erforderliche Bewehrung', prov: 'vorhandene Bewehrung', miss: 'fehlende Bewehrung (Zulage)' };
+const GRAY = { r: 0.72, g: 0.74, b: 0.78 };
+
+function cornerPos(mesh, k) {
+  const nd = mesh.shells[Math.floor(k / 4)].nodes[k % 4];
+  return [mesh.nodes[3 * nd], mesh.nodes[3 * nd + 1], mesh.nodes[3 * nd + 2]];
+}
+
 function buildRC(vp, group, mesh) {
   const st = vp.store, rv = st.resultView;
+  const code = st.model.settings.code === 'SIA' ? 'SIA' : 'EC';
   const comp = DESIGN_COMPONENTS.rc.find((c) => c.key === rv.component) || DESIGN_COMPONENTS.rc[0];
   const cols = paletteColors(rv.palette);
-  if (comp.kind === 'rcbeam') {
-    const list = st.results.rcBeams || [];
-    let mx = 0;
-    for (const r of list) for (const v of r[comp.key] || []) mx = Math.max(mx, v);
-    const { idx } = st;
-    const segs = [], colors = [];
-    let n = 0;
-    for (const r of list) {
-      const l = idx.lines.get(r.line);
-      if (!l) continue;
-      const a = idx.nodes.get(l.n1), b = idx.nodes.get(l.n2);
-      const vals = r[comp.key] || [0];
-      const xs = r.x || vals.map((_, i) => i / Math.max(1, vals.length - 1));
-      const L = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) || 1;
-      let vmax = 0;
-      for (let i = 0; i < vals.length - 1; i++) {
-        const s0 = Math.min(1, xs[i] / (r.x ? L : 1)), s1 = Math.min(1, xs[i + 1] / (r.x ? L : 1));
-        const c = colorAt(cols, mx > 0 ? vals[i] / mx : 0, rv.levels);
-        segs.push(a.x + (b.x - a.x) * s0, a.y + (b.y - a.y) * s0, a.z + (b.z - a.z) * s0, a.x + (b.x - a.x) * s1, a.y + (b.y - a.y) * s1, a.z + (b.z - a.z) * s1);
-        colors.push(c.r, c.g, c.b, c.r, c.g, c.b);
-        vmax = Math.max(vmax, vals[i], vals[i + 1]);
-      }
-      if (st.view.labelsValues && n++ < 400 && vmax > 0) group.add(label(fmt(comp.q, vmax), [(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2], 'big'));
-    }
-    ghostMesh(vp, group, mesh);
-    const ln = vp.lines.make(segs, 0xffffff, 6, { vertexColors: colors });
-    if (ln) group.add(ln);
-    return { title: t(comp.label), sub: t('Stahlbetonbemessung Balken'), min: 0, max: mx || 1, palette: rv.palette, levels: rv.levels, q: comp.q, extremes: [[t('Max'), fmt(comp.q, mx)]] };
-  }
+  if (comp.kind === 'rcbeam') return buildRCBeams(vp, group, mesh, comp, cols, code);
+  if (comp.kind === 'punch') return buildPunching(vp, group, mesh);
   const rc = st.results.rc;
-  if (!rc?.asCorner || !mesh.shells.length) return { title: t(comp.label), empty: true, msg: t('Keine Bemessungsergebnisse für Flächen.') };
-  const A = rc.asCorner;
+  if (!rc?.asCorner || !mesh.shells.length) return { title: t(comp.label), empty: true, msg: t('Keine Bemessungsergebnisse für Flächen – „Flächen bemessen“ ausführen.') };
+  if (comp.kind === 'shear') {
+    const util = paletteColors('utilization');
+    let mx = 0, n = 0, nz = 0;
+    const corner = [];
+    for (let k = 0; k < mesh.shells.length * 4; k++) {
+      const r = rc.vRatio[k];
+      if (r < 0) { corner.push(GRAY); nz++; continue; }
+      mx = Math.max(mx, r); if (r > 1) n++;
+      corner.push(colorAt(util, Math.min(1, r), 0));
+    }
+    deformedGeometry(vp, group, mesh, new Float64Array(mesh.nodes.length * 2), 0, { cornerColors: corner, beamColor: vp.C.ghost });
+    for (const d of rc.domains) if (d.vMaxAt >= 0 && d.vMax > 0) group.add(label(`${(d.vMax * 100).toFixed(0)} %`, cornerPos(mesh, d.vMaxAt), 'big ' + (d.vMax > 1 ? 'neg' : '')));
+    return {
+      title: t('Querkraft vEd / vRd,c'), sub: t('Platte ohne Schubbewehrung · grau: Durchstanzbereich'), min: 0, max: 1, palette: 'utilization', levels: 0, q: 'percent',
+      extremes: [[t('max.'), (mx * 100).toFixed(0) + ' %'], [t('> 100 %'), String(n)]],
+    };
+  }
+  // reinforcement layer: required / provided / missing
+  const mode = rv.rcMode === 'prov' || rv.rcMode === 'miss' ? rv.rcMode : 'req';
+  const provOf = new Map(st.model.domains.map((d) => [d.id, d.rcProv ? providedAreas(d.rcProv) : null]));
+  const A = rc.asCorner, nS = mesh.shells.length;
+  const vals = new Float64Array(nS * 4);
+  let anyProv = false;
+  for (let e = 0; e < nS; e++) {
+    const pv = provOf.get(mesh.shells[e].domain);
+    if (pv) anyProv = true;
+    for (let c = 0; c < 4; c++) {
+      const req = A[(e * 4 + c) * 4 + comp.c], have = pv ? pv[comp.c] : 0;
+      vals[e * 4 + c] = mode === 'req' ? req : mode === 'prov' ? have : Math.max(0, req - have);
+    }
+  }
+  let mx = 0, mxAt = -1;
+  for (let k = 0; k < vals.length; k++) if (vals[k] > mx) { mx = vals[k]; mxAt = k; }
+  const corner = Array.from(vals, (v) => (mode === 'miss' && !(v > 1e-9) ? GRAY : colorAt(cols, mx > 0 ? v / mx : 0, rv.levels)));
+  deformedGeometry(vp, group, mesh, new Float64Array(mesh.nodes.length * 2), 0, { cornerColors: corner, beamColor: vp.C.ghost });
+  // per domain: maximum with a bar suggestion
+  const byDom = new Map();
+  for (let k = 0; k < vals.length; k++) {
+    const id = mesh.shells[Math.floor(k / 4)].domain;
+    const b = byDom.get(id);
+    if (!b || vals[k] > b.v) byDom.set(id, { v: vals[k], k });
+  }
+  let nl = 0;
+  for (const [id, b] of byDom) {
+    if (!(b.v > 1e-9) || nl++ > 80) continue;
+    const sum = rc.domains.find((d) => d.id === id);
+    const sug = mode === 'prov' ? null : slabSuggestion(b.v, comp.key, sum?.layout, code);
+    group.add(label(`${fmt(comp.q, b.v)}${sug ? ' · ' + meshText(sug) : ''}`, cornerPos(mesh, b.k), 'big'));
+  }
+  const nMiss = mode === 'miss' ? new Set([...byDom].filter(([, b]) => b.v > 1e-9).map(([id]) => id)).size : 0;
+  return {
+    title: `${comp.key} – ${layerName(comp.key)}`, sub: t(RC_MODE_SUB[mode]) + (mode !== 'req' && !anyProv ? ' · ' + t('keine Vorgabe') : ''),
+    min: 0, max: mx || 1, palette: rv.palette, levels: rv.levels, q: comp.q,
+    extremes: [[t('Max'), fmt(comp.q, mx)], ...(mode === 'req' && mx > 0 ? [[t('Vorschlag'), meshText(slabSuggestion(mx, comp.key, rc.domains.find((d) => d.id === mesh.shells[Math.floor(mxAt / 4)].domain)?.layout, code))]] : []),
+      ...(mode === 'miss' ? [[t('Flächen mit Zulage'), String(nMiss)]] : [])],
+  };
+}
+
+function buildRCBeams(vp, group, mesh, comp, cols, code) {
+  const st = vp.store, rv = st.resultView;
+  const list = st.results.rcBeams || [];
+  if (!list.length) return { title: t(comp.label), empty: true, msg: t('Keine Betonbalken bemessen – „Balken bemessen“ ausführen.') };
   let mx = 0;
-  for (let i = comp.c; i < A.length; i += 4) mx = Math.max(mx, A[i]);
-  const corner = [];
-  for (let e = 0; e < mesh.shells.length; e++) for (let k = 0; k < 4; k++) corner.push(colorAt(cols, mx > 0 ? A[(e * 4 + k) * 4 + comp.c] / mx : 0, rv.levels));
-  const zero = new Float64Array(mesh.nodes.length * 2);
-  deformedGeometry(vp, group, mesh, zero, 0, { cornerColors: corner, beamColor: vp.C.ghost });
-  return { title: t(comp.label), sub: t('erforderliche Bewehrung'), min: 0, max: mx || 1, palette: rv.palette, levels: rv.levels, q: comp.q, extremes: [[t('Max'), fmt(comp.q, mx)]] };
+  for (const r of list) for (const v of r[comp.key] || []) if (Number.isFinite(v)) mx = Math.max(mx, v);
+  const { idx } = st;
+  const segs = [], colors = [];
+  let n = 0;
+  for (const r of list) {
+    const l = idx.lines.get(r.line);
+    if (!l) continue;
+    const a = idx.nodes.get(l.n1), b = idx.nodes.get(l.n2);
+    const vals = r[comp.key] || [0];
+    const L = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) || 1;
+    let vmax = 0;
+    for (let i = 0; i < vals.length - 1; i++) {
+      const s0 = Math.min(1, r.x[i] / L), s1 = Math.min(1, r.x[i + 1] / L);
+      const c = colorAt(cols, mx > 0 ? vals[i] / mx : 0, rv.levels);
+      segs.push(a.x + (b.x - a.x) * s0, a.y + (b.y - a.y) * s0, a.z + (b.z - a.z) * s0, a.x + (b.x - a.x) * s1, a.y + (b.y - a.y) * s1, a.z + (b.z - a.z) * s1);
+      colors.push(c.r, c.g, c.b, c.r, c.g, c.b);
+      vmax = Math.max(vmax, vals[i], vals[i + 1]);
+    }
+    if (n++ < 300 && vmax > 0) {
+      const sug = beamSuggestion(r, code);
+      const txt = comp.key === 'Asw' ? stirrupText(sug.stirrups) : barsText(comp.key === 'AsBot' ? sug.bot : sug.top);
+      group.add(label(st.view.labelsValues ? `${fmt(comp.q, vmax)} · ${txt}` : txt, [(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2], 'big' + (r.ok === false ? ' neg' : '')));
+    }
+  }
+  ghostMesh(vp, group, mesh);
+  const ln = vp.lines.make(segs, 0xffffff, 6, { vertexColors: colors });
+  if (ln) group.add(ln);
+  const nT = list.filter((r) => r.tBeam).length;
+  return { title: t(comp.label), sub: t('Stahlbetonbalken') + (nT ? ' · ' + t('{n} Plattenbalken', { n: nT }) : ''), min: 0, max: mx || 1, palette: rv.palette, levels: rv.levels, q: comp.q, extremes: [[t('Max'), fmt(comp.q, mx)], [t('nicht erfüllt'), String(list.filter((r) => r.ok === false).length)]] };
+}
+
+function buildPunching(vp, group, mesh) {
+  const st = vp.store;
+  const P = st.results.punching;
+  ghostMesh(vp, group, mesh);
+  if (!P?.items?.length) return { title: t('Durchstanzen'), empty: true, msg: t('Keine Stützen oder Punktlager unter Betonplatten gefunden.') };
+  const util = paletteColors('utilization');
+  const segs = [], colors = [];
+  let mx = 0;
+  for (const it of P.items) {
+    mx = Math.max(mx, it.eta);
+    const c = colorAt(util, Math.min(1, it.eta), 0);
+    const pts = it.perimeter;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      if (Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) > 4 * it.a) continue; // gap at slab edges
+      segs.push(...a, ...b);
+      colors.push(c.r, c.g, c.b, c.r, c.g, c.b);
+    }
+    group.add(label(`${(it.eta * 100).toFixed(0)} %`, it.center, 'big ' + (it.eta > 1 ? 'neg' : '')));
+  }
+  const ln = vp.lines.make(segs, 0xffffff, 5, { vertexColors: colors });
+  if (ln) group.add(ln);
+  const nR = P.items.filter((i) => i.needsReinf && !i.fail).length, nF = P.items.filter((i) => i.fail).length;
+  return {
+    title: t('Durchstanzen'), sub: st.model.settings.code === 'SIA' ? 'SIA 262 4.3.6' : 'EN 1992-1-1 6.4', min: 0, max: 1, palette: 'utilization', levels: 0, q: 'percent',
+    extremes: [[t('max. η'), (mx * 100).toFixed(0) + ' %'], [t('Durchstanzbewehrung'), String(nR)], [t('nicht möglich'), String(nF)]],
+  };
 }

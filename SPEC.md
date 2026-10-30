@@ -61,7 +61,8 @@ model = {
   nl: null | 'tension' | 'compression',       // tension-/compression-only (truss) – nonlinear analysis only
   k: [kx,ky,kz,krx,kry,krz],  // spring only, GLOBAL directions [kN/m, kNm/rad]
   divisions: undefined | n,   // override settings.beamDivisions
-  design: { Ky:1, Kz:1, KLT:1, C1:1.0, steelCheck:true }, // buckling length factors (L_cr = K·L), optional
+  design: { Ky:1, Kz:1, KLT:1, C1:1.0, steelCheck:true,  // buckling length factors (L_cr = K·L), optional
+            rc: { cover, dia, diaStirrup, fyk, tBeam:true, l0Factor:1 } }, // RC beams; tBeam = T-beam with slab
 }
 ```
 `rib` = beam that is eccentric/attached to a domain; treat exactly like `beam`.
@@ -83,7 +84,9 @@ model = {
   type: 'shell' | 'plate' | 'membrane',
   material: id, thickness: 0.2,   // [m]
   meshSize: undefined | h,        // override settings.meshSize
-  rc: { cover: 0.03, dia: 0.012, fyk: 500000 },  // RC design params (optional)
+  rc: { coverB: 0.03, coverT: 0.03, diaX: 0.012, diaY: 0.012, fyk: 500000 },  // RC design params (optional;
+                                  //   legacy cover/dia apply to both faces/directions; x = outer layer)
+  rcProv: { xb: { dia, s }, yb, xt, yt },  // provided reinforcement per layer (optional, m)
 }
 ```
 **Local axes of a domain**: `n` = Newell normal of the outer polygon. Orient so that

@@ -2,12 +2,15 @@
 import { t } from '../i18n.js';
 import { h, ic, field, numInput, selectInput, segmented, switchInput, hintBox, section } from './dom.js';
 import { P, lineLength, domainAxes, polygonArea, defaultLineElement, modelStats } from '../core/model.js';
+import { surfaceLayout } from '../design/concrete.js';
 import { fmt, fmtNum } from '../core/units.js';
 import { openMaterials, openSections, openLoadCases, openCombinations } from './dialogs/manage.js';
 import { editReleases, supportDialog, designParams } from './dialogs/assign.js';
 import { nodeLoadDialog, lineLoadDialog, surfaceLoadDialog, describeLoad } from './dialogs/loads.js';
 import { runStatic, runModalDialog, runBucklingDialog, runDesign } from './dialogs/analysis.js';
-import { COMPONENTS, DESIGN_COMPONENTS, caseOptions, caseSummary, componentDef } from './results-data.js';
+import { COMPONENTS, caseOptions, caseSummary, componentDef, UTIL_CHECKS } from './results-data.js';
+import { rcParamsDialog, rcProvidedDialog, rcProtocolDialog, rcBeamDetail, memberDetail } from './dialogs/rc.js';
+import { designMessage, checkName, layerName, slabSuggestion, beamSuggestion, meshText, barsText, stirrupText, POS_NAMES } from './design-text.js';
 import { PALETTE_NAMES } from './vp-util.js';
 import { pointKeys } from './pointinput.js';
 
@@ -196,6 +199,9 @@ function lineProps(app) {
         sec.appendChild(h('div.row', { style: { marginBottom: '8px' } },
           h('button.btn.sm', { onclick: () => editReleases(app) }, ic('hinge'), t('Gelenke')), rel ? h('span.badge.acc', t('{n} mit Gelenken', { n: rel })) : null,
           h('button.btn.sm', { onclick: () => designParams(app) }, ic('buckling'), t('Knicklängen'))));
+        if (els.some((e) => st.idx.materials.get(e.material)?.type === 'concrete')) {
+          sec.appendChild(h('button.btn.sm', { style: { marginBottom: '8px' }, onclick: () => rcParamsDialog(app) }, ic('concrete'), t('Bewehrungsparameter')));
+        }
       }
     }
     if (curType === 'spring') {
@@ -236,10 +242,22 @@ function domainProps(app) {
     onChange: (v) => setAll(t('Netzgrösse'), (d) => { if (v) d.meshSize = v; else delete d.meshSize; }) })));
   const mat = st.idx.materials.get(common('material'));
   if (mat?.type === 'concrete') {
-    const rc = doms[0].rc || {};
+    const L = surfaceLayout(doms[0].rc, doms[0].thickness || 0.2);
+    const mm = (v) => Math.round(v * 1000);
     sec.appendChild(h('div.side-section-title', { style: { marginTop: '10px' } }, ic('concrete'), t('Bewehrung')));
-    sec.appendChild(field(t('Betondeckung'), numInput({ value: rc.cover ?? 0.03, q: 'dim', min: 0, onChange: (v) => setAll(t('Betondeckung'), (d) => { d.rc = { ...(d.rc || {}), cover: v }; }) })));
-    sec.appendChild(field(t('Stab-Ø'), numInput({ value: rc.dia ?? 0.012, q: 'dim', min: 0.004, onChange: (v) => setAll(t('Stabdurchmesser'), (d) => { d.rc = { ...(d.rc || {}), dia: v }; }) })));
+    const kv = h('div.kv', { style: { marginBottom: '6px' } },
+      h('span', t('Deckung unten / oben')), h('span', `${mm(L.coverB)} / ${mm(L.coverT)} mm`),
+      h('span', t('Ø x / y')), h('span', `${mm(L.diaX)} / ${mm(L.diaY)} mm`),
+      h('span', t('d x/y unten')), h('span', `${mm(L.d.xb)} / ${mm(L.d.yb)} mm`),
+      h('span', t('d x/y oben')), h('span', `${mm(L.d.xt)} / ${mm(L.d.yt)} mm`));
+    if (doms[0].rcProv) {
+      const p = doms[0].rcProv;
+      kv.append(h('span', t('vorhanden')), h('span', ['xb', 'yb', 'xt', 'yt'].map((k) => (p[k]?.s > 0 ? `${k} Ø${mm(p[k].dia)}/${mm(p[k].s)}` : null)).filter(Boolean).join(' · ') || '–'));
+    }
+    sec.appendChild(kv);
+    sec.appendChild(h('div.row', { style: { gap: '6px', marginBottom: '8px' } },
+      h('button.btn.sm.grow', { onclick: () => rcParamsDialog(app) }, ic('concrete'), t('Parameter')),
+      h('button.btn.sm.grow', { onclick: () => rcProvidedDialog(app) }, ic('grid'), t('Vorhanden'))));
   }
   if (doms.length === 1) {
     const ax = domainAxes(doms[0].nodes.map((id) => P(st.idx.nodes.get(id))));
@@ -531,56 +549,118 @@ function modePanel(app, el) {
 }
 
 function utilPanel(app, el) {
-  const st = app.store, rv = st.resultView;
-  const list = (rv.kind === 'steel' ? st.results.steel : st.results.timber) || [];
-  const sorted = [...list].sort((a, b) => (b.eta ?? 0) - (a.eta ?? 0));
-  const fail = list.filter((r) => r.eta > 1).length;
-  const maxEta = sorted[0]?.eta ?? 0;
+  const st = app.store, rv = st.resultView, kind = rv.kind;
+  const list = (kind === 'steel' ? st.results.steel : st.results.timber) || [];
+  const check = rv.component && rv.component !== 'eta' ? rv.component : null;
+  const etaOf = (r) => (check ? r.checks?.[check]?.eta ?? null : r.eta ?? 0);
+  const sorted = list.filter((r) => etaOf(r) != null).sort((a, b) => etaOf(b) - etaOf(a));
+  const fail = sorted.filter((r) => etaOf(r) > 1).length;
+  const maxEta = sorted[0] ? etaOf(sorted[0]) : 0;
   el.appendChild(h('div.stat-grid', { style: { gridTemplateColumns: '1fr 1fr 1fr', marginBottom: '14px' } },
     h('div.stat', h('div.v', String(list.length)), h('div.l', t('Stäbe'))),
     h('div.stat', h('div.v', { style: { color: maxEta > 1 ? 'var(--danger)' : 'var(--success)' } }, (maxEta * 100).toFixed(0) + '%'), h('div.l', t('max. η'))),
     h('div.stat', h('div.v', { style: { color: fail ? 'var(--danger)' : 'var(--success)' } }, String(fail)), h('div.l', t('η > 100%')))));
-  el.appendChild(hintBox(t('Norm: {c}. Klick auf einen Stab zeigt alle Nachweise.', { c: st.model.settings.code === 'SIA' ? (rv.kind === 'steel' ? 'SIA 263' : 'SIA 265') : (rv.kind === 'steel' ? 'EN 1993-1-1' : 'EN 1995-1-1') })));
+  // result components: governing check or a single check (as in AxisVM)
+  const present = UTIL_CHECKS.filter((k) => list.some((r) => r.checks?.[k]));
+  const chips = h('div.chip-row');
+  for (const k of ['eta', ...present]) {
+    chips.appendChild(h('button.btn.sm' + ((rv.component || 'eta') === k ? '.primary' : ''), { onclick: () => st.setResultView({ component: k }), tip: [k === 'eta' ? t('Massgebender Nachweis je Stab') : checkName(k)] }, k === 'eta' ? t('η max') : k));
+  }
+  el.appendChild(section(t('Komponente'), chips));
+  el.appendChild(hintBox(t('Norm: {c}. Klick auf einen Stab im 3D-Fenster (Doppelklick) oder auf ⓘ zeigt alle Nachweise mit Schnittgrössenverläufen.', { c: st.model.settings.code === 'SIA' ? (kind === 'steel' ? 'SIA 263' : 'SIA 265') : (kind === 'steel' ? 'EN 1993-1-1' : 'EN 1995-1-1') })));
   const box = h('div.list');
-  for (const r of sorted.slice(0, 60)) {
-    const eta = r.eta ?? 0;
+  for (const r of sorted.slice(0, 80)) {
+    const eta = etaOf(r);
     const col = eta > 1 ? 'var(--danger)' : eta > 0.85 ? 'var(--warning)' : 'var(--success)';
-    const item = h('button.list-item', { onclick: () => { st.select({ lines: [r.line] }, 'replace'); detail.style.display = detail.style.display === 'none' ? '' : 'none'; } },
+    const gov = check ? checkName(check) : r.governing ? checkName(r.governing.check) : '';
+    box.appendChild(h('div.list-item' + (st.selection.lines.has(r.line) ? '.active' : ''), { onclick: (e) => { if (!e.target.closest('button')) st.select({ lines: [r.line] }, 'replace'); } },
       h('span.small', { style: { width: '42px' } }, '#' + r.line),
       h('span.util-bar', h('i', { style: { width: Math.min(100, eta * 100) + '%', background: col } })),
       h('b.small', { style: { color: col } }, (eta * 100).toFixed(0) + '%'),
-      h('span.meta', r.governing?.check || ''));
-    const detail = h('div', { style: { display: 'none', padding: '4px 10px 10px 52px' } },
-      r.cls ? h('div.small.muted', t('Querschnittsklasse {c}', { c: r.cls })) : null,
-      ...Object.entries(r.checks || {}).map(([k, c]) => h('div.small', { style: { margin: '3px 0' } }, h('b', `${k}: ${((c.eta ?? 0) * 100).toFixed(0)}%`), c.detail ? h('div.muted', c.detail) : null)),
-      r.notes?.length ? h('div.small.muted', r.notes.join(' · ')) : null);
-    box.append(item, detail);
+      h('span.meta', gov),
+      h('button.icon-btn.sm', { onclick: () => memberDetail(app, kind, r.line), tip: [t('Bemessungsdetails')] }, ic('info'))));
   }
   if (!list.length) box.appendChild(h('div.empty', t('Keine passenden Stäbe gefunden (Material Stahl bzw. Holz erforderlich).')));
   el.appendChild(section(t('Stäbe nach Ausnutzung'), box));
-  el.appendChild(h('button.btn.block', { onclick: () => runDesign(app, rv.kind) }, ic('run'), t('Neu bemessen')));
+  const w = (list.warnings || []).map(designMessage);
+  if (w.length) el.appendChild(section(t('Hinweise'), ...w.slice(0, 6).map((x) => hintBox(x, 'warn'))));
+  el.appendChild(h('div.row', h('button.btn.grow', { onclick: () => designParams(app) }, ic('buckling'), t('Knicklängen')), h('button.btn.grow', { onclick: () => runDesign(app, kind) }, ic('run'), t('Neu bemessen'))));
 }
 
 function rcPanel(app, el) {
-  const st = app.store, rv = st.resultView;
-  const comps = DESIGN_COMPONENTS.rc.filter((c) => (c.kind === 'rc' ? st.results.rc : st.results.rcBeams));
-  const wrap = h('div.row', { style: { flexWrap: 'wrap', gap: '4px', marginBottom: '14px' } });
-  for (const c of comps) wrap.appendChild(h('button.btn.sm' + (rv.component === c.key ? '.primary' : ''), { onclick: () => st.setResultView({ component: c.key }), tip: [t(c.label)] }, c.key));
-  el.appendChild(section(t('Bewehrung'), wrap));
-  el.appendChild(hintBox(t('axb/ayb: untere Lage in lokaler x/y-Richtung, axt/ayt: obere Lage. Wood-Armer-Momente, Norm {c}.', { c: st.model.settings.code === 'SIA' ? 'SIA 262' : 'EN 1992-1-1' })));
-  const w = st.results.rc?.warnings || [];
-  if (w.length) el.appendChild(section(t('Hinweise'), ...w.slice(0, 8).map((x) => hintBox(x, 'warn'))));
-  const beams = st.results.rcBeams || [];
-  if (beams.length) {
-    const box = h('div.list');
-    for (const b of beams.slice(0, 40)) {
-      const mx = (a) => Math.max(0, ...(a || [0]));
-      box.appendChild(h('button.list-item', { onclick: () => st.select({ lines: [b.line] }, 'replace') },
-        h('span.small', '#' + b.line), h('span.meta', `${fmt('reinfBeam', mx(b.AsBot))} / ${fmt('reinfBeam', mx(b.AsTop))} · ${fmt('reinf', mx(b.Asw))}`),
-        b.ok === false ? h('span.badge.err', '!') : null));
+  const st = app.store, rv = st.resultView, R = st.results;
+  const code = st.model.settings.code === 'SIA' ? 'SIA' : 'EC';
+  const set = (p) => st.setResultView(p);
+  const comp = rv.component;
+  // --- surfaces
+  if (R.rc) {
+    const sec = h('div.side-section', h('div.side-section-title', ic('domain'), t('Flächenbewehrung')));
+    const isLayer = /^a[xy][bt]$/.test(comp);
+    sec.appendChild(segmented([{ value: 'req', label: t('Erforderlich') }, { value: 'prov', label: t('Vorhanden') }, { value: 'miss', label: t('Fehlend') }], isLayer ? rv.rcMode || 'req' : null,
+      (v) => set({ rcMode: v, component: isLayer ? comp : 'axb' }), { full: true }));
+    const chips = h('div.chip-row', { style: { margin: '8px 0' } });
+    for (const k of ['axb', 'ayb', 'axt', 'ayt']) chips.appendChild(h('button.btn.sm' + (comp === k ? '.primary' : ''), { onclick: () => set({ component: k }), tip: [`${k}: ${layerName(k)}`, t('Bewehrung in lokaler {d}-Richtung, {f} (lokale z-Achse zeigt nach oben)', { d: k[1], f: k[2] === 'b' ? t('untere Lage') : t('obere Lage') })] }, k));
+    chips.appendChild(h('button.btn.sm' + (comp === 'vRatio' ? '.primary' : ''), { onclick: () => set({ component: 'vRatio' }), tip: [t('Querkraft vEd/vRd,c'), t('Platte ohne Schubbewehrung')] }, t('Schub')));
+    if (R.punching?.items?.length) chips.appendChild(h('button.btn.sm' + (comp === 'punch' ? '.primary' : ''), { onclick: () => set({ component: 'punch' }) }, t('Durchstanzen')));
+    sec.appendChild(chips);
+    // summary per domain: maxima with suggestions (what the design produced)
+    for (const d of R.rc.domains.slice(0, 12)) {
+      const mat = st.idx.materials.get(d.material);
+      const grid = h('div.rc-sum');
+      ['axb', 'ayb', 'axt', 'ayt'].forEach((k, j) => {
+        const sug = slabSuggestion(d.max[j], k, d.layout, code);
+        const pv = d.prov ? d.prov[j] : null;
+        grid.append(h('span.l', { style: { cursor: 'pointer', color: comp === k ? 'var(--accent)' : '' }, onclick: () => set({ component: k, rcMode: 'req' }) }, k),
+          h('span.s', d.max[j] > 0 ? meshText(sug) + (d.minGoverns[j] && d.max[j] <= d.asMin[j] * 1.0001 ? ' · min' : '') : t('keine Zugbewehrung')),
+          h('span.v', { style: { color: pv != null && pv < d.max[j] - 1e-9 ? 'var(--danger)' : '' } }, fmt('reinf', d.max[j])));
+      });
+      grid.append(h('span.l', 'v'), h('span.s', d.vMax > 1 ? t('Schubbewehrung erforderlich') : t('ohne Schubbewehrung ok')), h('span.v', { style: { color: d.vMax > 1 ? 'var(--danger)' : '' } }, (d.vMax * 100).toFixed(0) + ' %'));
+      sec.appendChild(h('div', { style: { margin: '10px 0 4px' } },
+        h('div.row', h('b.small', t('Fläche {id}', { id: d.id })), h('span.small.muted', `${fmt('thick', d.t)} · ${mat?.name || ''}`), h('span.grow'),
+          h('button.icon-btn.sm', { onclick: () => { st.select({ domains: [d.id] }, 'replace'); app.zoomSelection(); }, tip: [t('Zeigen')] }, ic('target'))),
+        grid));
     }
-    el.appendChild(section(t('Balken: As unten / oben · Bügel'), box));
+    if (R.rc.domains.length > 12) sec.appendChild(h('div.small.muted', t('… und {n} weitere', { n: R.rc.domains.length - 12 })));
+    sec.appendChild(h('div.small.muted', { style: { marginTop: '6px' } }, t('Werte: Maximum je Fläche über alle Bemessungskombinationen, inkl. Mindestbewehrung. Vorschlag mit dem Ø aus den Bewehrungsparametern.')));
+    el.appendChild(sec);
+  } else {
+    el.appendChild(h('button.btn.block', { style: { marginBottom: '10px' }, onclick: () => runDesign(app, 'rc') }, ic('run'), t('Flächen bemessen')));
   }
-  el.appendChild(h('div.row', h('button.btn.grow', { onclick: () => runDesign(app, 'rc') }, ic('run'), t('Flächen')), h('button.btn.grow', { onclick: () => runDesign(app, 'rcBeam') }, ic('run'), t('Balken'))));
+  // --- punching
+  const P = R.punching?.items || [];
+  if (P.length) {
+    const box = h('div.list');
+    for (const it of [...P].sort((a, b) => b.eta - a.eta).slice(0, 30)) {
+      const col = it.fail ? 'var(--danger)' : it.eta > 1 ? 'var(--warning)' : 'var(--success)';
+      box.appendChild(h('button.list-item', { onclick: () => { st.select({ nodes: [it.node] }, 'replace'); set({ component: 'punch' }); } },
+        h('span.small', { style: { width: '42px' } }, '#' + it.node),
+        h('span.util-bar', h('i', { style: { width: Math.min(100, it.eta * 100) + '%', background: col } })),
+        h('b.small', { style: { color: col } }, (it.eta * 100).toFixed(0) + '%'),
+        h('span.meta', it.fail ? t('verstärken') : it.needsReinf ? t('Bewehrung') : t(POS_NAMES[it.type]))));
+    }
+    el.appendChild(section(t('Durchstanzen'), box));
+  }
+  // --- beams
+  const beams = R.rcBeams || [];
+  if (beams.length) {
+    const chips = h('div.chip-row', { style: { marginBottom: '8px' } });
+    for (const [k, l] of [['AsBot', t('As unten')], ['AsTop', t('As oben')], ['Asw', t('Bügel')]]) chips.appendChild(h('button.btn.sm' + (comp === k ? '.primary' : ''), { onclick: () => set({ component: k }) }, l));
+    const box = h('div.list');
+    for (const b of beams.slice(0, 60)) {
+      const sug = beamSuggestion(b, code);
+      box.appendChild(h('div.list-item' + (st.selection.lines.has(b.line) ? '.active' : ''), { onclick: (e) => { if (!e.target.closest('button')) st.select({ lines: [b.line] }, 'replace'); } },
+        h('span.small', { style: { width: '38px' } }, '#' + b.line),
+        h('div', { style: { minWidth: 0, flex: 1 } }, h('div.small', `${barsText(sug.bot)} / ${barsText(sug.top)}`), h('div.small.muted', `${stirrupText(sug.stirrups)}${b.tBeam ? ' · ' + t('Plattenbalken') : ''}`)),
+        b.ok === false ? h('span.badge.err', '!') : null,
+        h('button.icon-btn.sm', { onclick: () => rcBeamDetail(app, b.line), tip: [t('Bemessungsdetails')] }, ic('info'))));
+    }
+    el.appendChild(section(t('Balken: unten / oben · Bügel'), chips, box));
+  } else {
+    el.appendChild(h('button.btn.block', { style: { marginBottom: '10px' }, onclick: () => runDesign(app, 'rcBeam') }, ic('beam'), t('Balken bemessen')));
+  }
+  const w = [...(R.rc?.warnings || []), ...(R.rcBeams?.warnings || [])].filter((x) => !/vEd > vRd,c/.test(x)).map(designMessage);
+  if (w.length) el.appendChild(section(t('Hinweise'), ...w.slice(0, 8).map((x) => hintBox(x, 'warn'))));
+  el.appendChild(h('div.list', { style: { gap: '6px' } },
+    h('button.btn.block.primary', { onclick: () => rcProtocolDialog(app) }, ic('fileText'), t('Bemessungsprotokoll')),
+    h('div.row', h('button.btn.grow', { onclick: () => rcParamsDialog(app) }, ic('concrete'), t('Parameter')), h('button.btn.grow', { onclick: () => rcProvidedDialog(app) }, ic('grid'), t('Vorhanden')))));
 }
-

@@ -61,11 +61,13 @@
 // Minimum longitudinal reinforcement as for surfaces (tension zone width), As,max = 0.04·Ac (ok=false).
 
 import { designCode, num, pos, fmt, designContext, collectLineForces, MEMBER_TYPES } from './common.js';
+import { tBeamSetup, tBeamForces } from './tbeam.js';
 
 export const FLAG_COMPRESSION_REINF = 1;
 export const FLAG_AS_MAX = 2;
 export const FLAG_SHEAR = 4;
 export const FLAG_FAIL = 8;
+export const FLAG_MIN = 16; // minimum reinforcement governs at least one layer
 
 const ES = 200e6; // kN/m², reinforcing steel E modulus
 const AS_EPS = 1e-7; // m²/m – below this a layer counts as "no reinforcement required"
@@ -218,6 +220,80 @@ function rcDefaults(src, defs) {
 
 // ─────────────────────────────────────── surfaces ───────────────────────────────────────
 
+/**
+ * Layer layout of a slab/shell domain (domain.rc) for thickness t: the x bars form the outer layer
+ * and the y bars the inner layer on both faces. Legacy fields cover/dia apply to both faces/directions.
+ * @returns { coverB, coverT, diaX, diaY, fyk, t, d:{ xb, yb, xt, yt } } (effective depths, m)
+ */
+export function surfaceLayout(rc, t) {
+  rc = rc || {};
+  const coverB = pos(rc.coverB, pos(rc.cover, 0.03)), coverT = pos(rc.coverT, pos(rc.cover, 0.03));
+  const diaX = pos(rc.diaX, pos(rc.dia, 0.012)), diaY = pos(rc.diaY, pos(rc.dia, 0.012));
+  const fyk = pos(rc.fyk, 500000);
+  return {
+    coverB, coverT, diaX, diaY, fyk, t,
+    d: { xb: t - coverB - diaX / 2, yb: t - coverB - diaX - diaY / 2, xt: t - coverT - diaX / 2, yt: t - coverT - diaX - diaY / 2 },
+  };
+}
+
+/** Provided reinforcement of a domain (domain.rcProv = { xb:{dia, s}, yb, xt, yt }) → [xb, yb, xt, yt] m²/m. */
+export function providedAreas(prov) {
+  return ['xb', 'yb', 'xt', 'yt'].map((k) => {
+    const l = prov && prov[k];
+    return l && l.dia > 0 && l.s > 0 ? Math.PI * l.dia * l.dia / 4 / l.s : 0;
+  });
+}
+
+/**
+ * Required reinforcement for one set of surface forces f = [nx, ny, nxy, mx, my, mxy, vx, vy]
+ * (no minimum reinforcement). Returns the Wood–Armer moments, membrane design forces and
+ * as = [axb, ayb, axt, ayt] in m²/m.
+ */
+export function designSurfacePoint(f, L, P, type) {
+  const t = L.t;
+  const base = { b: 1, h: t, fcd: P.fcd, fyd: P.fyd, lam: P.lam, eta: P.eta, xiLim: P.xiLim, ecu: P.ecu };
+  const wa = woodArmer(f[3], f[4], f[5]);
+  const nd = type === 'plate' ? { Nx: 0, Ny: 0 } : membraneDesignForces(f[0], f[1], f[2]);
+  const xb = designMN(wa.mxb, nd.Nx, { ...base, d: L.d.xb, d2: t - L.d.xt });
+  const xt = designMN(-wa.mxt, nd.Nx, { ...base, d: L.d.xt, d2: t - L.d.xb });
+  const yb = designMN(wa.myb, nd.Ny, { ...base, d: L.d.yb, d2: t - L.d.yt });
+  const yt = designMN(-wa.myt, nd.Ny, { ...base, d: L.d.yt, d2: t - L.d.yb });
+  const all = [xb, xt, yb, yt];
+  return {
+    wa, nd,
+    as: [Math.max(xb.As1, xt.As2), Math.max(yb.As1, yt.As2), Math.max(xt.As1, xb.As2), Math.max(yt.As1, yb.As2)],
+    comp: all.some((r) => r.comp), fail: all.some((r) => r.fail),
+  };
+}
+
+/** Minimum reinforcement per layer [xb, yb, xt, yt] (m²/m). */
+function surfaceMin(P, L) {
+  return [L.d.xb, L.d.yb, L.d.xt, L.d.yt].map((d) => asMin(P, 1, L.t, d));
+}
+
+/** Slab shear (no shear reinforcement): vRd,c with ρl from the larger of required and provided areas. */
+function surfaceShear(P, L, as, prov) {
+  const dm = (L.d.xb + L.d.yb + L.d.xt + L.d.yt) / 4;
+  const a = as.map((v, j) => Math.max(v, prov ? prov[j] : 0));
+  const rhoL = (Math.max(a[0], a[2]) + Math.max(a[1], a[3])) / 2 / dm;
+  return { vRd: shearResistanceNoStirrups(P, 1, dm, rhoL), dm, rhoL };
+}
+
+/** Prepared design data of one domain, or { skip: reason } (English, for warnings). */
+function domainSetup(ctx, dom, s0, code, opts) {
+  const mat = ctx.materials.get(Number(s0.material ?? dom.material));
+  if (!mat || mat.type !== 'concrete') return null;
+  const type = s0.type || dom.type;
+  if (type && !['plate', 'shell', 'membrane'].includes(type)) return null;
+  const t = pos(s0.thickness, pos(dom.thickness, NaN));
+  const L = surfaceLayout(dom.rc, t);
+  const P = concreteParams(mat, L.fyk, code, opts);
+  if (!P) return { skip: 'concrete material without fck – RC design skipped' };
+  if (!(t > 0)) return { skip: 'no thickness – RC design skipped' };
+  if (!(Math.min(L.d.yb, L.d.yt) > 0.2 * t)) return { skip: `thickness ${fmt(t, 3)} m too small for cover/dia – skipped` };
+  return { mat, type, t, L, P, prov: dom.rcProv ? providedAreas(dom.rcProv) : null };
+}
+
 export function designRCSurfaces(model, mesh, staticResults, caseKeys, opts = {}) {
   opts = opts || {};
   const code = designCode(model, opts);
@@ -226,10 +302,33 @@ export function designRCSurfaces(model, mesh, staticResults, caseKeys, opts = {}
   const nS = shells.length;
   const asCorner = new Float64Array(nS * 16);
   const flags = new Uint8Array(nS * 4);
-  const result = { asCorner, warnings, code, flags };
+  const gov = new Int16Array(nS * 16).fill(-1); // governing case index (into `keys`) per corner and layer
+  const vRatio = new Float32Array(nS * 4);     // vEd / vRd,c per corner (0 = not checked, −1 = punching zone)
+  const domains = [];
+  const result = { asCorner, warnings, code, flags, gov, vRatio, keys: [], domains };
   try {
     const ctx = designContext(model, mesh, staticResults, caseKeys, warnings, 'shells');
+    result.keys = ctx.keys;
     const useMin = opts.minReinf !== false;
+    // Slab shear is not checked where other checks govern:
+    //  opts.shearExclude = [{ p:[x,y,z], r }]  zones around columns (punching check),
+    //  opts.shearExcludeSegs = [{ a, b, hb }]  beams/ribs (T-beam shear): within hb + d of the axis.
+    const zones = Array.isArray(opts.shearExclude) ? opts.shearExclude : [];
+    const segsX = Array.isArray(opts.shearExcludeSegs) ? opts.shearExcludeSegs : [];
+    const X = mesh && mesh.nodes;
+    const excluded = (e, c, d) => {
+      if ((!zones.length && !segsX.length) || !X) return false;
+      const nd = shells[e].nodes[c];
+      const p = [X[3 * nd], X[3 * nd + 1], X[3 * nd + 2]];
+      if (zones.some((z) => (p[0] - z.p[0]) ** 2 + (p[1] - z.p[1]) ** 2 + (p[2] - z.p[2]) ** 2 <= z.r * z.r)) return true;
+      return segsX.some((sg) => {
+        const v = [sg.b[0] - sg.a[0], sg.b[1] - sg.a[1], sg.b[2] - sg.a[2]], w = [p[0] - sg.a[0], p[1] - sg.a[1], p[2] - sg.a[2]];
+        const ll = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+        const u = ll > 0 ? Math.max(0, Math.min(1, (w[0] * v[0] + w[1] * v[1] + w[2] * v[2]) / ll)) : 0;
+        const r = sg.hb + d;
+        return (w[0] - u * v[0]) ** 2 + (w[1] - u * v[1]) ** 2 + (w[2] - u * v[2]) ** 2 <= r * r;
+      });
+    };
     // group shell elements by domain
     const byDomain = new Map();
     for (let e = 0; e < nS; e++) {
@@ -241,84 +340,100 @@ export function designRCSurfaces(model, mesh, staticResults, caseKeys, opts = {}
     }
     for (const [domId, elems] of byDomain) {
       const dom = ctx.domains.get(domId) || {};
-      const s0 = shells[elems[0]];
-      const mat = ctx.materials.get(Number(s0.material ?? dom.material));
-      if (!mat || mat.type !== 'concrete') continue;
-      const type = s0.type || dom.type;
-      if (type && !['plate', 'shell', 'membrane'].includes(type)) continue;
-      const rc = rcDefaults(dom.rc, { cover: 0.03, dia: 0.012, fyk: 500000 });
-      const P = concreteParams(mat, rc.fyk, code, opts);
-      if (!P) { warnings.push(`Domain ${domId}: concrete material without fck – RC design skipped`); continue; }
-      let nComp = 0, nMax = 0, nShear = 0, nFail = 0, vMaxRatio = 0;
+      const D = domainSetup(ctx, dom, shells[elems[0]], code, opts);
+      if (!D) continue;
+      if (D.skip) { warnings.push(`Domain ${domId}: ${D.skip}`); continue; }
+      const { type, t, L, P, prov } = D;
+      const asMinL = surfaceMin(P, L);
+      const sum = {
+        id: domId, type, t, material: D.mat.id, fck: P.fck, fcd: P.fcd, fyd: P.fyd, layout: L, asMin: asMinL,
+        max: [0, 0, 0, 0], maxAt: [-1, -1, -1, -1], maxCase: [-1, -1, -1, -1], minGoverns: [false, false, false, false],
+        nCorners: elems.length * 4, nComp: 0, nMax: 0, nFail: 0, nShear: 0, vMax: 0, vMaxAt: -1, prov,
+      };
       for (const e of elems) {
-        const sh = shells[e];
-        const t = pos(sh.thickness, pos(dom.thickness, NaN));
-        if (!(t > 0)) { nFail++; continue; }
-        const dx = t - rc.cover - rc.dia / 2, dy = dx - rc.dia;
-        if (!(dy > 0.2 * t)) { warnings.push(`Domain ${domId}: thickness ${fmt(t, 3)} m too small for cover/dia – skipped`); break; }
-        const d2x = rc.cover + rc.dia / 2, d2y = rc.cover + 1.5 * rc.dia;
-        const base = { b: 1, h: t, fcd: P.fcd, fyd: P.fyd, lam: P.lam, eta: P.eta, xiLim: P.xiLim, ecu: P.ecu };
-        const SX = { ...base, d: dx, d2: d2x }; // outer (x) layers on both faces
-        const SY = { ...base, d: dy, d2: d2y }; // inner (y) layers on both faces
         for (let c = 0; c < 4; c++) {
-          const o = (e * 4 + c) * 16 / 4; // = (e*4+c)*4
+          const o = (e * 4 + c) * 4, i0 = (e * 4 + c) * 8;
           let vEdMax = 0, flag = 0;
-          for (const key of ctx.keys) {
+          ctx.keys.forEach((key, ki) => {
             const sv = ctx.cases[key].shells;
-            const i0 = (e * 4 + c) * 8;
-            if (!sv || sv.length < i0 + 8) continue;
-            const nx = sv[i0], ny = sv[i0 + 1], nxy = sv[i0 + 2], mx = sv[i0 + 3], my = sv[i0 + 4], mxy = sv[i0 + 5];
-            const vEd = Math.hypot(sv[i0 + 6], sv[i0 + 7]);
-            if (vEd > vEdMax) vEdMax = vEd;
-            const wa = woodArmer(mx, my, mxy);
-            const nd = type === 'plate' ? { Nx: 0, Ny: 0 } : membraneDesignForces(nx, ny, nxy);
-            // x direction
-            const xb = designMN(wa.mxb, nd.Nx, SX), xt = designMN(-wa.mxt, nd.Nx, SX);
-            const yb = designMN(wa.myb, nd.Ny, SY), yt = designMN(-wa.myt, nd.Ny, SY);
-            const axb = Math.max(xb.As1, xt.As2), axt = Math.max(xt.As1, xb.As2);
-            const ayb = Math.max(yb.As1, yt.As2), ayt = Math.max(yt.As1, yb.As2);
-            if (xb.comp || xt.comp || yb.comp || yt.comp) flag |= FLAG_COMPRESSION_REINF;
-            if (xb.fail || xt.fail || yb.fail || yt.fail) flag |= FLAG_FAIL;
-            const k = o;
-            if (axb > asCorner[k]) asCorner[k] = axb;
-            if (ayb > asCorner[k + 1]) asCorner[k + 1] = ayb;
-            if (axt > asCorner[k + 2]) asCorner[k + 2] = axt;
-            if (ayt > asCorner[k + 3]) asCorner[k + 3] = ayt;
-          }
+            if (!sv || sv.length < i0 + 8) return;
+            const f = sv.subarray ? sv.subarray(i0, i0 + 8) : sv.slice(i0, i0 + 8);
+            vEdMax = Math.max(vEdMax, Math.hypot(f[6], f[7]));
+            const r = designSurfacePoint(f, L, P, type);
+            if (r.comp) flag |= FLAG_COMPRESSION_REINF;
+            if (r.fail) flag |= FLAG_FAIL;
+            for (let j = 0; j < 4; j++) if (r.as[j] > asCorner[o + j]) { asCorner[o + j] = r.as[j]; gov[o + j] = ki; }
+          });
           // minimum reinforcement (layers in tension only)
-          const k = o;
-          if (useMin) {
-            const minX = asMin(P, 1, t, dx), minY = asMin(P, 1, t, dy);
-            for (const [j, mn] of [[0, minX], [1, minY], [2, minX], [3, minY]]) {
-              if (asCorner[k + j] > AS_EPS && asCorner[k + j] < mn) asCorner[k + j] = mn;
-            }
-          }
           for (let j = 0; j < 4; j++) {
-            if (!Number.isFinite(asCorner[k + j])) { asCorner[k + j] = 0.04 * t; flag |= FLAG_FAIL; }
-            if (asCorner[k + j] > 0.04 * t) flag |= FLAG_AS_MAX;
+            if (useMin && asCorner[o + j] > AS_EPS && asCorner[o + j] < asMinL[j]) { asCorner[o + j] = asMinL[j]; flag |= FLAG_MIN; if (!sum.minGoverns[j]) sum.minGoverns[j] = true; }
+            if (!Number.isFinite(asCorner[o + j])) { asCorner[o + j] = 0.04 * t; flag |= FLAG_FAIL; }
+            if (asCorner[o + j] > 0.04 * t) flag |= FLAG_AS_MAX;
+            if (asCorner[o + j] > sum.max[j]) { sum.max[j] = asCorner[o + j]; sum.maxAt[j] = e * 4 + c; sum.maxCase[j] = gov[o + j]; }
           }
-          // slab shear without shear reinforcement (check only)
-          if (type !== 'membrane' && vEdMax > 0) {
-            const dm = (dx + dy) / 2;
-            const rhoL = (Math.max(asCorner[k], asCorner[k + 2]) + Math.max(asCorner[k + 1], asCorner[k + 3])) / 2 / dm;
-            const vRd = shearResistanceNoStirrups(P, 1, dm, rhoL);
-            if (vEdMax > vRd) { flag |= FLAG_SHEAR; nShear++; vMaxRatio = Math.max(vMaxRatio, vEdMax / vRd); }
+          // slab shear without shear reinforcement (check only); punching zones are checked separately
+          if (excluded(e, c, (L.d.xb + L.d.yb) / 2)) vRatio[e * 4 + c] = -1;
+          else if (type !== 'membrane' && vEdMax > 0) {
+            const { vRd } = surfaceShear(P, L, asCorner.subarray(o, o + 4), prov);
+            const ratio = vEdMax / vRd;
+            vRatio[e * 4 + c] = ratio;
+            if (ratio > sum.vMax) { sum.vMax = ratio; sum.vMaxAt = e * 4 + c; }
+            if (ratio > 1) { flag |= FLAG_SHEAR; sum.nShear++; }
           }
           flags[e * 4 + c] = flag;
-          if (flag & FLAG_COMPRESSION_REINF) nComp++;
-          if (flag & FLAG_AS_MAX) nMax++;
-          if (flag & FLAG_FAIL) nFail++;
+          if (flag & FLAG_COMPRESSION_REINF) sum.nComp++;
+          if (flag & FLAG_AS_MAX) sum.nMax++;
+          if (flag & FLAG_FAIL) sum.nFail++;
         }
       }
-      if (nComp) warnings.push(`Domain ${domId}: compression reinforcement required (x/d > ${P.xiLim}, ${P.ref.xi}) at ${nComp} corner(s)`);
-      if (nMax) warnings.push(`Domain ${domId}: As > As,max = 0.04·Ac at ${nMax} corner(s)`);
-      if (nFail) warnings.push(`Domain ${domId}: design not possible (section too small / missing data) at ${nFail} corner(s)`);
-      if (nShear) warnings.push(`Domain ${domId}: vEd > vRd,c at ${nShear} corner(s) (max ratio ${fmt(vMaxRatio, 2)}, ${P.ref.V}) – shear reinforcement required, not designed`);
+      domains.push(sum);
+      if (sum.nComp) warnings.push(`Domain ${domId}: compression reinforcement required (x/d > ${P.xiLim}, ${P.ref.xi}) at ${sum.nComp} corner(s)`);
+      if (sum.nMax) warnings.push(`Domain ${domId}: As > As,max = 0.04·Ac at ${sum.nMax} corner(s)`);
+      if (sum.nFail) warnings.push(`Domain ${domId}: design not possible (section too small / missing data) at ${sum.nFail} corner(s)`);
+      if (sum.nShear) warnings.push(`Domain ${domId}: vEd > vRd,c at ${sum.nShear} corner(s) (max ratio ${fmt(sum.vMax, 2)}, ${P.ref.V}) – shear reinforcement required, not designed`);
     }
   } catch (e) {
     warnings.push(`RC surface design aborted: ${e && e.message}`);
   }
   return result;
+}
+
+/**
+ * Full design trace at one shell corner (element e, corner c) – used for the result probe and the
+ * design report: forces, Wood–Armer moments and required reinforcement per case, minimum
+ * reinforcement and the slab shear check. Returns null when the element is not designed.
+ */
+export function rcSurfaceDetail(model, mesh, staticResults, caseKeys, e, c, opts = {}) {
+  const code = designCode(model, opts);
+  const sh = mesh?.shells?.[e];
+  if (!sh) return null;
+  const ctx = designContext(model, mesh, staticResults, caseKeys, [], 'shells');
+  const dom = ctx.domains.get(Number(sh.domain)) || {};
+  const D = domainSetup(ctx, dom, sh, code, opts);
+  if (!D || D.skip) return null;
+  const { type, L, P, prov } = D;
+  const i0 = (e * 4 + c) * 8;
+  const cases = [];
+  const as = [0, 0, 0, 0], gov = [null, null, null, null];
+  let vEd = 0, vCase = null;
+  for (const key of ctx.keys) {
+    const sv = ctx.cases[key].shells;
+    if (!sv || sv.length < i0 + 8) continue;
+    const f = Array.from(sv.slice ? sv.slice(i0, i0 + 8) : sv.subarray(i0, i0 + 8));
+    const r = designSurfacePoint(f, L, P, type);
+    cases.push({ key, f, ...r });
+    for (let j = 0; j < 4; j++) if (r.as[j] > as[j]) { as[j] = r.as[j]; gov[j] = key; }
+    const v = Math.hypot(f[6], f[7]);
+    if (v > vEd) { vEd = v; vCase = key; }
+  }
+  const min = surfaceMin(P, L);
+  const final = as.map((a, j) => (opts.minReinf !== false && a > AS_EPS && a < min[j] ? min[j] : a));
+  const shear = type !== 'membrane' && vEd > 0 ? surfaceShear(P, L, final, prov) : null;
+  return {
+    domain: dom.id, type, code, layout: L, P, cases, required: as, as: final, min, gov, prov,
+    minGoverns: final.map((a, j) => a > as[j]),
+    shear: shear ? { vEd, vRd: shear.vRd, ratio: vEd / shear.vRd, caseKey: vCase, d: shear.dm, rhoL: shear.rhoL } : null,
+  };
 }
 
 // ─────────────────────────────────────── beams ───────────────────────────────────────
@@ -354,12 +469,8 @@ function designBeam(ctx, code, line, el, mat, opts) {
   const sec = ctx.sections.get(Number(el.section));
   if (!sec) return W('no section');
   const dims = sec.dims || {};
-  let bw, bf = 0, hf = 0, h;
-  if (sec.shape === 'RECT' && dims.h > 0 && dims.b > 0) { h = dims.h; bw = dims.b; }
-  else if (sec.shape === 'T' && dims.h > 0 && dims.b > 0 && dims.tw > 0 && dims.tf > 0) { h = dims.h; bw = dims.tw; bf = dims.b; hf = dims.tf; }
-  else return W(`section shape ${sec.shape} not supported (RECT/T only)`);
-  const rc = rcDefaults(Object.assign({}, sec.rc || {}, (el.design && el.design.rc) || {}, opts.rc || {}),
-    { cover: 0.03, dia: 0.020, diaStirrup: 0.010, fyk: 500000, fywk: 0 });
+  const rcIn = Object.assign({}, sec.rc || {}, (el.design && el.design.rc) || {}, opts.rc || {});
+  const rc = rcDefaults(rcIn, { cover: 0.03, dia: 0.020, diaStirrup: 0.010, fyk: 500000, fywk: 0 });
   if (!(rc.fywk > 0)) rc.fywk = rc.fyk;
   const P = concreteParams(mat, rc.fyk, code, opts);
   if (!P) return W('concrete material without fck');
@@ -367,12 +478,23 @@ function designBeam(ctx, code, line, el, mat, opts) {
   if (!(L > 0)) return W('zero length');
   const segs = ctx.segs.get(Number(line.id));
   if (!segs || !segs.length) return W('no mesh beams');
+  let bw, bf = 0, hf = 0, h, shape = sec.shape, tb = null;
+  if (sec.shape === 'RECT' && dims.h > 0 && dims.b > 0) {
+    h = dims.h; bw = dims.b;
+    // Plattenbalken: rib/beam in the plane of a concrete slab → T-section with effective flange
+    if (rcIn.tBeam !== false && (el.type === 'rib' || el.type === 'beam')) {
+      tb = tBeamSetup(ctx, line, segs, bw, L, { l0: rcIn.l0, l0Factor: rcIn.l0Factor });
+      if (tb && h > tb.hf + 1e-3) { bf = tb.beff; hf = tb.hf; shape = 'T'; }
+      else if (tb) { bw = tb.beff; h = Math.max(h, tb.hf); }
+    }
+  } else if (sec.shape === 'T' && dims.h > 0 && dims.b > 0 && dims.tw > 0 && dims.tf > 0) { h = dims.h; bw = dims.tw; bf = dims.b; hf = dims.tf; }
+  else return W(`section shape ${sec.shape} not supported (RECT/T only)`);
   const d = h - rc.cover - rc.diaStirrup - rc.dia / 2;
   const d2 = rc.cover + rc.diaStirrup + rc.dia / 2;
   if (!(d > 0.5 * h)) return W('cover/bar diameters too large for the section height');
   const z = 0.9 * d;
   const fywd = rc.fywk / pos(opts.gammaS, 1.15);
-  const Ac = sec.shape === 'T' ? bf * hf + bw * (h - hf) : bw * h;
+  const Ac = bf > 0 ? bf * hf + bw * (h - hf) : bw * h;
   const notes = [];
   const base = { h, d, d2, fcd: P.fcd, fyd: P.fyd, lam: P.lam, eta: P.eta, xiLim: P.xiLim, ecu: P.ecu };
 
@@ -384,7 +506,7 @@ function designBeam(ctx, code, line, el, mat, opts) {
   const rhoWmin = SIA ? 0.001 * Math.sqrt(P.fckM / 30) * 500 / (rc.fywk / 1000) : 0.08 * Math.sqrt(P.fckM) / (rc.fywk / 1000);
   const AswMin = rhoWmin * bw;
 
-  let xs = null, AsBot = null, AsTop = null, Asw = null;
+  let xs = null, AsBot = null, AsTop = null, Asw = null, env = null;
   let ok = true, compAt = null, vmaxFail = null, failAt = null, MzSig = false, TSig = false, MyAbsMax = 0;
   let cotUsedMin = Infinity;
   for (const key of ctx.keys) {
@@ -394,11 +516,19 @@ function designBeam(ctx, code, line, el, mat, opts) {
     if (!xs) {
       xs = f.x.slice();
       AsBot = new Array(n).fill(0); AsTop = new Array(n).fill(0); Asw = new Array(n).fill(0);
+      env = { MyMax: new Array(n).fill(-Infinity), MyMin: new Array(n).fill(Infinity), MyRibMax: new Array(n).fill(-Infinity), MyRibMin: new Array(n).fill(Infinity), V: new Array(n).fill(0) };
     }
     if (n !== xs.length) { notes.push(`case ${key}: station count mismatch – ignored`); continue; }
+    // Plattenbalken: add the slab share within the effective width
+    const slab = tb ? tBeamForces(tb, ctx, ctx.cases[key], f.x) : null;
     const aB = new Array(n), aT = new Array(n), dF = new Array(n);
     for (let j = 0; j < n; j++) {
-      const My = f.My[j], N = f.N[j], V = Math.abs(f.Vz[j]);
+      const My = f.My[j] + (slab ? slab.M[j] : 0), N = f.N[j] + (slab ? slab.N[j] : 0);
+      const V = Math.abs(f.Vz[j]) + (slab ? Math.abs(slab.V[j]) : 0);
+      env.MyMax[j] = Math.max(env.MyMax[j], My); env.MyMin[j] = Math.min(env.MyMin[j], My);
+      env.MyRibMax[j] = Math.max(env.MyRibMax[j], f.My[j]); env.MyRibMin[j] = Math.min(env.MyRibMin[j], f.My[j]);
+      env.V[j] = Math.max(env.V[j], V);
+      f.My[j] = My;
       MyAbsMax = Math.max(MyAbsMax, Math.abs(My));
       if (Math.abs(f.Mz[j]) > Math.max(1, 0.05 * Math.abs(My))) MzSig = true;
       if (Math.abs(f.T[j]) > 1) TSig = true;
@@ -457,6 +587,7 @@ function designBeam(ctx, code, line, el, mat, opts) {
     notes.push('no result cases – nothing designed');
     return { line: line.id, x: [], AsBot: [], AsTop: [], Asw: [], ok: true, notes, code, b: bw, h, d };
   }
+  if (tb) notes.push(`T-beam: beff = ${fmt(tb.beff, 2)} m (${tb.sides.map((sd) => fmt(sd.beffI, 2)).join(' + ')} + bw), hf = ${fmt(tb.hf, 3)} m, l0 = ${fmt(tb.l0, 2)} m – slab forces within beff added (EN 1992-1-1 5.3.2.1)`);
   // minimum / maximum reinforcement
   if (opts.minReinf !== false) {
     const minB = asMin(P, bw, h, d), minT = asMin(P, bf > 0 ? bf : bw, h, d);
@@ -479,5 +610,10 @@ function designBeam(ctx, code, line, el, mat, opts) {
   notes.push(SIA
     ? `shear: fixed compression field cot α = ${fmt(Math.min(cotMax, Math.max(1, cotFixed ?? 1)), 2)}, z = 0.9d (${P.ref.V})`
     : `shear: variable strut, cot θ ${Number.isFinite(cotUsedMin) ? `≥ ${fmt(cotUsedMin, 2)}` : `= ${fmt(cotFixed ?? cotMax, 2)}`} (≤ ${fmt(cotMax, 2)}), z = 0.9d (${P.ref.V})`);
-  return { line: line.id, x: xs, AsBot, AsTop, Asw, ok, notes, code, b: bw, h, d };
+  return {
+    line: line.id, x: xs, AsBot, AsTop, Asw, ok, notes, code, b: bw, h, d,
+    section: { shape, bw, bf, hf, h, d, d2, cover: rc.cover, dia: rc.dia, diaStirrup: rc.diaStirrup, fyk: rc.fyk },
+    tBeam: tb ? { beff: tb.beff, hf: tb.hf, l0: tb.l0, sides: tb.sides.map((sd) => ({ domain: sd.domain, b: sd.b, beffI: sd.beffI })) } : null,
+    env, z, P: { fcd: P.fcd, fyd: P.fyd, fck: P.fck, ref: P.ref }, AswMin, asMin: opts.minReinf !== false ? { bot: asMin(P, bw, h, d), top: asMin(P, bf > 0 ? bf : bw, h, d) } : null,
+  };
 }

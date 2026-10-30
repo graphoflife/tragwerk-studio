@@ -9,6 +9,7 @@ import { nodeLoadDialog, lineLoadDialog, surfaceLoadDialog, temperatureDialog, s
 import { transformDialog, splitDialog } from './dialogs/transform.js';
 import { generatorDialog } from './dialogs/generators.js';
 import { runStatic, runModalDialog, runBucklingDialog, runSpectrumDialog, runDesign, meshGenerate, meshSettings, checkModel } from './dialogs/analysis.js';
+import { rcParamsDialog, rcProvidedDialog, rcProtocolDialog, rcBeamDetail, memberDetail } from './dialogs/rc.js';
 import { settingsDialog, modelInfoDialog } from './dialogs/settings.js';
 import { openTables } from './dialogs/tables.js';
 import { openReport } from './dialogs/report.js';
@@ -20,9 +21,11 @@ export const MODULES = [
   { id: 'loads', label: 'Lasten', icon: 'loadLine', mod: 'rose' },
   { id: 'mesh', label: 'Netz', icon: 'mesh', mod: 'mint' },
   { id: 'static', label: 'Statik', icon: 'diagram', mod: 'lemon' },
-  { id: 'vibration', label: 'Schwingung', icon: 'vibration', mod: 'teal' },
   { id: 'buckling', label: 'Knicken', icon: 'buckling', mod: 'peach' },
-  { id: 'design', label: 'Bemessung', icon: 'gauge', mod: 'lilac' },
+  { id: 'vibration', label: 'Schwingung', icon: 'vibration', mod: 'teal' },
+  { id: 'rc', label: 'Stahlbeton', icon: 'concrete', mod: 'lilac' },
+  { id: 'steel', label: 'Stahl', icon: 'steel', mod: 'sky' },
+  { id: 'timber', label: 'Holz', icon: 'timber', mod: 'peach' },
   { id: 'report', label: 'Bericht', icon: 'report', mod: 'slate' },
 ];
 
@@ -39,6 +42,15 @@ export function createCommands(app) {
   const toggleView = (k) => () => st.setView({ [k]: !st.view[k] });
   const viewOn = (k) => () => !!st.view[k];
   const showRes = (kind, component) => () => app.showResults(kind, component);
+  const isRc = () => st.resultView.kind === 'rc';
+  const rcLayer = () => (/^a[xy][bt]$/.test(st.resultView.component) ? st.resultView.component : 'axb');
+  // show an RC result; designs first when there is no result yet
+  const showRc = async (patch, need = 'rc') => {
+    const have = need === 'rcBeam' ? st.results.rcBeams : st.results.rc;
+    if (!have) { const ok = await runDesign(app, need); if (!ok) return; }
+    st.setResultView({ kind: 'rc', ...patch });
+    app.showSide('results');
+  };
 
   const C = {
     // ---- file & general
@@ -146,6 +158,7 @@ export function createCommands(app) {
     supLine: { label: 'Linienlager', desc: 'Linienlager / elastische Bettung entlang gewählter Linien', icon: 'supportLine', run: () => need(['lines'], t('Bitte Linien auswählen.')) && supportDialog(app, 'line') },
     supSurface: { label: 'Flächenbettung', desc: 'Elastische Bettung (Winkler) unter gewählten Flächen', icon: 'supportSurface', run: () => need(['domains'], t('Bitte Flächen auswählen.')) && supportDialog(app, 'surface') },
     designParams: { label: 'Knicklängen', desc: 'Knicklängenbeiwerte und Kippparameter für Bemessung', icon: 'buckling', run: () => need(['lines'], t('Bitte Stäbe auswählen.')) && designParams(app) },
+    rcParams: { label: 'Bewehrungsparameter', desc: 'Betondeckung, Stabdurchmesser, Lagen und Stahlsorte für gewählte Flächen bzw. Betonbalken (Plattenbalken: mitwirkende Breite)', icon: 'concrete', run: () => rcParamsDialog(app) },
 
     // ---- loads
     loadCases: { label: 'Lastfälle', desc: 'Lastfälle und Lastgruppen verwalten', icon: 'loadCase', run: () => openLoadCases(app) },
@@ -183,11 +196,23 @@ export function createCommands(app) {
     runBuckling: { label: 'Knickanalyse', desc: 'Lineare Stabilitätsanalyse (kritische Lastfaktoren)', icon: 'buckling', run: () => runBucklingDialog(app) },
     resBuckling: { label: 'Knickformen', desc: 'Knickformen anzeigen', icon: 'animate', run: showRes('buckling'), active: () => st.resultView.kind === 'buckling' },
 
-    // ---- design
-    designSteel: { label: 'Stahl', desc: 'Stahlbemessung (EN 1993-1-1 / SIA 263)', icon: 'steel', run: () => runDesign(app, 'steel'), active: () => st.resultView.kind === 'steel' },
-    designRC: { label: 'Stahlbeton Flächen', desc: 'Erforderliche Bewehrung in Platten und Schalen (EN 1992-1-1 / SIA 262)', icon: 'concrete', run: () => runDesign(app, 'rc'), active: () => st.resultView.kind === 'rc' && !String(st.resultView.component).startsWith('As') },
-    designRCBeam: { label: 'Stahlbeton Balken', desc: 'Biege- und Schubbewehrung von Betonbalken', icon: 'beam', run: () => runDesign(app, 'rcBeam'), active: () => st.resultView.kind === 'rc' && String(st.resultView.component).startsWith('As') },
-    designTimber: { label: 'Holz', desc: 'Holzbemessung (EN 1995-1-1 / SIA 265)', icon: 'timber', run: () => runDesign(app, 'timber'), active: () => st.resultView.kind === 'timber' },
+    // ---- design: reinforced concrete
+    designRC: { label: 'Flächen bemessen', desc: 'Erforderliche Bewehrung axb, ayb, axt, ayt in Platten und Schalen (Wood-Armer, EN 1992-1-1 / SIA 262), Schubnachweis und Durchstanzen', icon: 'run', run: () => runDesign(app, 'rc') },
+    designRCBeam: { label: 'Balken bemessen', desc: 'Längs- und Bügelbewehrung von Betonbalken und Rippen (Plattenbalken mit mitwirkender Plattenbreite)', icon: 'beam', run: () => runDesign(app, 'rcBeam') },
+    rcProvided: { label: 'Vorhandene Bewehrung', desc: 'Gewählte Flächenbewehrung (Ø / Abstand je Lage) vorgeben – zeigt dann fehlende Zulagen', icon: 'grid', run: () => rcProvidedDialog(app) },
+    resRcReq: { label: 'Erforderlich', desc: 'Erforderliche Bewehrung der gewählten Lage', icon: 'contour', run: () => showRc({ rcMode: 'req', component: rcLayer() }), active: () => isRc() && st.resultView.rcMode !== 'prov' && st.resultView.rcMode !== 'miss' && /^a[xy][bt]$/.test(st.resultView.component) },
+    resRcProv: { label: 'Vorhanden', desc: 'Vorgegebene (gewählte) Bewehrung der Lage', icon: 'grid', run: () => showRc({ rcMode: 'prov', component: rcLayer() }), active: () => isRc() && st.resultView.rcMode === 'prov' && /^a[xy][bt]$/.test(st.resultView.component) },
+    resRcMiss: { label: 'Fehlend', desc: 'Fehlende Bewehrung = erforderlich − vorhanden (Zulagen)', icon: 'alert', run: () => showRc({ rcMode: 'miss', component: rcLayer() }), active: () => isRc() && st.resultView.rcMode === 'miss' && /^a[xy][bt]$/.test(st.resultView.component) },
+    resRcShear: { label: 'Schub', desc: 'Querkraftnachweis der Platte ohne Schubbewehrung: vEd / vRd,c', icon: 'stress', run: () => showRc({ component: 'vRatio' }), active: () => isRc() && st.resultView.component === 'vRatio' },
+    resPunch: { label: 'Durchstanzen', desc: 'Durchstanznachweis an Stützen und Punktlagern (EN 1992-1-1 6.4 / SIA 262 4.3.6)', icon: 'target', run: () => showRc({ component: 'punch' }), active: () => isRc() && st.resultView.component === 'punch' },
+    resRcBeam: { label: 'Balkenbewehrung', desc: 'Erforderliche Längsbewehrung der Betonbalken (unten/oben) und Bügel', icon: 'beam', run: () => showRc({ component: 'AsBot' }, 'rcBeam'), active: () => isRc() && ['AsBot', 'AsTop', 'Asw'].includes(st.resultView.component) },
+    rcProtocol: { label: 'Bemessungsprotokoll', desc: 'Was wurde wie bemessen? Parameter, massgebende Kombinationen, Maxima, Bewehrungsvorschlag, Nachweise', icon: 'fileText', run: () => rcProtocolDialog(app) },
+    rcDetail: { label: 'Bemessungsdetails', desc: 'Ausführliche Bemessung des gewählten Balkens: Verläufe, Querschnitt, Bewehrungsvorschlag', icon: 'info', run: () => { const id = [...st.selection.lines][0]; if (!id) return toast(t('Bitte einen Betonbalken auswählen.'), 'info'); rcBeamDetail(app, id); } },
+    // ---- design: steel / timber
+    designSteel: { label: 'Stahlbemessung', desc: 'Querschnitts- und Stabilitätsnachweise (EN 1993-1-1 / SIA 263)', icon: 'run', run: () => runDesign(app, 'steel') },
+    designTimber: { label: 'Holzbemessung', desc: 'Querschnitts- und Stabilitätsnachweise (EN 1995-1-1 / SIA 265)', icon: 'run', run: () => runDesign(app, 'timber') },
+    resUtil: { label: 'Ausnutzung', desc: 'Ausnutzung η je Stab (massgebender Nachweis) – Klick auf einen Stab zeigt die Details', icon: 'gauge', run: () => app.showResults(st.tab === 'timber' ? 'timber' : 'steel', 'eta'), active: () => ['steel', 'timber'].includes(st.resultView.kind) },
+    memberDetail: { label: 'Bemessungsdetails', desc: 'Alle Nachweise des gewählten Stabes mit Schnittgrössenverläufen', icon: 'info', run: () => { const id = [...st.selection.lines][0]; if (!id) return toast(t('Bitte einen Stab auswählen.'), 'info'); memberDetail(app, st.tab === 'timber' ? 'timber' : 'steel', id); } },
     codeEC: { label: 'Eurocode', desc: 'Normenfamilie Eurocode (EN 1990 – EN 1998)', icon: 'eu', run: () => app.setCode('EC'), active: () => st.model.settings.code !== 'SIA' },
     codeSIA: { label: 'SIA', desc: 'Schweizer Normen SIA 260 – 265', icon: 'swiss', run: () => app.setCode('SIA'), active: () => st.model.settings.code === 'SIA' },
   };
@@ -241,11 +266,24 @@ export const RIBBON = {
     { title: 'Stabilität', items: ['runBuckling', 'resBuckling', 'runNonlinear'] },
     { title: 'Ausgabe', items: ['tables', 'report'] },
   ],
-  design: [
+  rc: [
     { title: 'Norm', items: ['codeEC', 'codeSIA'] },
-    { title: 'Bemessung', items: ['designSteel', 'designRC', 'designRCBeam', 'designTimber'] },
-    { title: 'Parameter', items: ['designParams', 'materials'] },
-    { title: 'Ausgabe', items: ['tables', 'report'] },
+    { title: 'Parameter', items: ['rcParams', 'materials'] },
+    { title: 'Bemessung', items: ['designRC', 'designRCBeam', 'rcProvided'] },
+    { title: 'Ergebnisse', items: ['resRcReq', 'resRcProv', 'resRcMiss', 'resRcShear', 'resPunch', 'resRcBeam'] },
+    { title: 'Ausgabe', items: ['rcProtocol', 'rcDetail', 'tables', 'report'] },
+  ],
+  steel: [
+    { title: 'Norm', items: ['codeEC', 'codeSIA'] },
+    { title: 'Parameter', items: ['designParams', 'sections', 'materials'] },
+    { title: 'Bemessung', items: ['designSteel', 'resUtil'] },
+    { title: 'Ausgabe', items: ['memberDetail', 'tables', 'report'] },
+  ],
+  timber: [
+    { title: 'Norm', items: ['codeEC', 'codeSIA'] },
+    { title: 'Parameter', items: ['designParams', 'sections', 'materials'] },
+    { title: 'Bemessung', items: ['designTimber', 'resUtil'] },
+    { title: 'Ausgabe', items: ['memberDetail', 'tables', 'report'] },
   ],
   report: [
     { title: 'Dokumentation', items: ['report', 'tables', 'screenshot'] },

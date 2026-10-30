@@ -6,6 +6,7 @@ import { fmt, fmtNum, toDisplay, fromDisplay, unitLabel } from '../../core/units
 import { caseOptions, getCase, caseLabel } from '../results-data.js';
 import { lineForces } from '../../fem/index.js';
 import { describeLoad } from './loads.js';
+import { checkName, meshText, slabSuggestion, beamSuggestion, barsText, stirrupText, POS_NAMES } from '../design-text.js';
 
 const TYPE = { beam: 'Balken', truss: 'Fachwerk', rib: 'Rippe', rigid: 'Starr', spring: 'Feder', plate: 'Platte', shell: 'Schale', membrane: 'Scheibe' };
 
@@ -150,15 +151,32 @@ function defs(app) {
   const util = (key, label, icon) => {
     out.push({ id: key, label, icon,
       cols: [{ k: 'id', l: t('Stab') }, { k: 'eta', l: 'η', u: '%' }, { k: 'gov', l: t('massgebend'), txt: true }, { k: 'case', l: t('Kombination'), txt: true }, { k: 'cls', l: t('Klasse'), txt: true }],
-      rows: () => R[key].map((r) => ({ id: r.line, eta: (r.eta ?? 0) * 100, gov: r.governing?.check || '', case: caseLabel(st, r.governing?.caseKey), cls: r.cls ?? '', _sel: { lines: [r.line] } })) });
+      rows: () => R[key].map((r) => ({ id: r.line, eta: (r.eta ?? 0) * 100, gov: r.governing ? checkName(r.governing.check) : '', case: caseLabel(st, r.governing?.caseKey), cls: r.cls ?? '', _sel: { lines: [r.line] } })) });
   };
-  if (R.steel || R.timber || R.rcBeams) out.push({ group: t('Bemessung') });
+  const code = st.model.settings.code === 'SIA' ? 'SIA' : 'EC';
+  if (R.steel || R.timber || R.rcBeams || R.rc) out.push({ group: t('Bemessung') });
+  if (R.rc?.domains?.length) {
+    out.push({ id: 'rcs', label: t('Flächenbewehrung'), icon: 'concrete',
+      cols: [{ k: 'id', l: t('Fläche') }, { k: 'lay', l: t('Lage'), txt: true }, { k: 'd', l: 'd', q: 'dim' }, { k: 'min', l: 'as,min', q: 'reinf' }, { k: 'max', l: t('erf. max'), q: 'reinf' }, { k: 'sug', l: t('Vorschlag'), txt: true }, { k: 'case', l: t('massgebend'), txt: true }],
+      rows: () => R.rc.domains.flatMap((d) => ['axb', 'ayb', 'axt', 'ayt'].map((lay, j) => ({
+        id: d.id, lay, d: d.layout.d[lay.slice(1)], min: d.asMin[j], max: d.max[j], sug: d.max[j] > 0 ? meshText(slabSuggestion(d.max[j], lay, d.layout, code)) : '–',
+        case: d.maxCase[j] >= 0 ? caseLabel(st, R.rc.keys[d.maxCase[j]]) : '', _sel: { domains: [d.id] } }))) });
+  }
+  if (R.punching?.items?.length) {
+    out.push({ id: 'punch', label: t('Durchstanzen'), icon: 'target',
+      cols: [{ k: 'id', l: t('Knoten') }, { k: 'pos', l: t('Lage'), txt: true }, { k: 'd', l: 'd', q: 'dim' }, { k: 'V', l: 'VEd', q: 'force' }, { k: 'eta', l: 'η', u: '%' }, { k: 'res', l: t('Ergebnis'), txt: true }, { k: 'case', l: t('massgebend'), txt: true }],
+      rows: () => R.punching.items.map((it) => ({ id: it.node, pos: t(POS_NAMES[it.type]), d: it.d, V: it.VEd, eta: it.eta * 100,
+        res: it.fail ? t('Platte verstärken / Stütze vergrössern') : it.needsReinf ? t('Durchstanzbewehrung erforderlich') : t('ohne Bewehrung erfüllt'), case: caseLabel(st, it.caseKey), _sel: { nodes: [it.node] } })) });
+  }
   if (R.steel) util('steel', t('Stahlnachweise'), 'steel');
   if (R.timber) util('timber', t('Holznachweise'), 'timber');
   if (R.rcBeams) {
     out.push({ id: 'rcb', label: t('Betonbalken'), icon: 'concrete',
-      cols: [{ k: 'id', l: t('Stab') }, { k: 'bot', l: 'As unten max', q: 'reinfBeam' }, { k: 'top', l: 'As oben max', q: 'reinfBeam' }, { k: 'sw', l: 'asw max', q: 'reinf' }, { k: 'ok', l: 'OK', txt: true }],
-      rows: () => R.rcBeams.map((b) => ({ id: b.line, bot: Math.max(0, ...b.AsBot), top: Math.max(0, ...b.AsTop), sw: Math.max(0, ...b.Asw), ok: b.ok === false ? '✗' : '✓', _sel: { lines: [b.line] } })) });
+      cols: [{ k: 'id', l: t('Stab') }, { k: 'sec', l: t('Querschnitt'), txt: true }, { k: 'bot', l: t('As unten max'), q: 'reinfBeam' }, { k: 'sb', l: t('Vorschlag'), txt: true }, { k: 'top', l: t('As oben max'), q: 'reinfBeam' }, { k: 'stp', l: t('Vorschlag'), txt: true }, { k: 'sw', l: 'asw max', q: 'reinf' }, { k: 'ssw', l: t('Bügel'), txt: true }, { k: 'ok', l: 'OK', txt: true }],
+      rows: () => R.rcBeams.map((b) => {
+        const sg = beamSuggestion(b, code);
+        return { id: b.line, sec: b.tBeam ? `T beff ${fmtNum(b.tBeam.beff, 3)} m` : `${Math.round(b.b * 1000)}×${Math.round(b.h * 1000)}`, bot: Math.max(0, ...b.AsBot), sb: barsText(sg.bot), top: Math.max(0, ...b.AsTop), stp: barsText(sg.top), sw: Math.max(0, ...b.Asw), ssw: stirrupText(sg.stirrups), ok: b.ok === false ? '✗' : '✓', _sel: { lines: [b.line] } };
+      }) });
   }
   return out;
 }

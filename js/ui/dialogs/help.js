@@ -13,7 +13,9 @@ const MODULE_TEXT = {
   static: 'Lineare & nichtlineare Statik, Schnittgrössen',
   vibration: 'Eigenformen und Erdbeben (Antwortspektrum)',
   buckling: 'Stabilität: kritische Lastfaktoren',
-  design: 'Stahl, Stahlbeton, Holz – Eurocode oder SIA',
+  rc: 'Bewehrung von Platten, Schalen und Plattenbalken, Durchstanzen',
+  steel: 'Querschnitts- und Stabilitätsnachweise (EN 1993 / SIA 263)',
+  timber: 'Holznachweise (EN 1995 / SIA 265)',
   report: 'Bericht, Tabellen, Export',
 };
 
@@ -104,6 +106,7 @@ export function shortcutsDialog(app) {
       h('li', t('Lasten: Lastfälle anlegen, Lasten auf ausgewählte Objekte aufbringen, Kombinationen erzeugen.')),
       h('li', t('Statik: Linear rechnen – das FE-Netz wird automatisch erzeugt.')),
       h('li', t('Ergebnisse in der rechten Leiste wählen: Verformung, Schnittgrössen, Spannungen.')),
-      h('li', t('Bemessung nach Eurocode oder SIA, dann Bericht erstellen.'))));
+      h('li', t('Bemessung nach Eurocode oder SIA in den Modulen Stahlbeton, Stahl und Holz – Doppelklick auf ein Ergebnis zeigt die Berechnung im Detail.')),
+      h('li', t('Bericht erstellen.'))));
   openDialog({ title: t('Hilfe & Tastenkürzel'), iconName: 'keyboard', mod: 'slate', size: 'xwide', body: h('div', intro, body), buttons: [{ label: t('Schliessen'), kind: 'primary' }] }).el.style.height = 'auto';
 }

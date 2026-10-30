@@ -237,7 +237,7 @@ export const GENERATORS = {
         const nx = Math.max(1, Math.round(p.cx)), ny = Math.max(1, Math.round(p.cy));
         for (let i = 0; i <= nx; i++) for (let j = 0; j <= ny; j++) {
           const n = addNode(m, [i * p.Lx / nx, j * p.Ly / ny, 0]);
-          m.supports.push({ id: nextId(m.supports), type: 'node', node: n, dofs: [i === 0 && j === 0 ? 'F' : 0, i === 0 && j === 0 ? 'F' : (i === nx && j === 0 ? 'F' : 0), 'F', 0, 0, 0], uplift: false });
+          m.supports.push({ id: nextId(m.supports), type: 'node', node: n, dofs: [i === 0 && j === 0 ? 'F' : 0, i === 0 && j === 0 ? 'F' : (i === nx && j === 0 ? 'F' : 0), 'F', 0, 0, 0], uplift: false, size: 0.45 });
         }
       }
       if (p.sup === 'bedding') {

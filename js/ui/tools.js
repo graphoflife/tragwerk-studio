@@ -129,6 +129,7 @@ class SelectTool {
   }
   dblclick(e) {
     const hit = this.T.vp.pick(e.x, e.y, this.T.store.view.selFilter);
+    if (this.T.app.openResultDetail?.(hit)) return;
     if (hit) { this.T.store.select({ [hit.kind + 's']: [hit.id] }, 'replace'); this.T.app.showSide('props'); }
   }
 }

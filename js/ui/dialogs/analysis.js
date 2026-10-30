@@ -5,9 +5,10 @@ import { validateModel } from '../../core/model.js';
 import { buildMesh } from '../../mesh/mesher.js';
 import { runFem, cancelFem } from '../../core/analysis.js';
 import { fmt } from '../../core/units.js';
-import { defaultCaseKey } from '../results-data.js';
+import { defaultCaseKey, componentDef } from '../results-data.js';
 import { checkSteelMembers } from '../../design/steel.js';
 import { designRCSurfaces, designRCBeams } from '../../design/concrete.js';
+import { checkPunching } from '../../design/punching.js';
 import { checkTimberMembers } from '../../design/timber.js';
 
 /* ---------------- mesh ---------------- */
@@ -144,11 +145,11 @@ export async function runStatic(app, nonlinear, opts) {
     res.nonlinear = !!nonlinear;
     st.results.static = res;
     st.results.staticOpts = { nonlinear: !!nonlinear, ...(opts || {}) };
-    st.results.steel = st.results.rc = st.results.rcBeams = st.results.timber = null;
+    st.results.steel = st.results.rc = st.results.rcBeams = st.results.punching = st.results.timber = null;
     const keep = st.resultView.caseKey && res.cases[st.resultView.caseKey];
     st.resultView.caseKey = keep ? st.resultView.caseKey : defaultCaseKey(st);
     st.resultView.kind = 'static';
-    if (!st.resultView.component || ['eta', 'axb', 'ayb', 'axt', 'ayt', 'AsBot', 'AsTop', 'Asw'].includes(st.resultView.component)) st.resultView.component = 'deformed';
+    if (!st.resultView.component || ['eta', 'axb', 'ayb', 'axt', 'ayt', 'vRatio', 'punch', 'AsBot', 'AsTop', 'Asw'].includes(st.resultView.component) || !componentDef(st.resultView.component)) st.resultView.component = 'deformed';
     st.emit('results');
     st.emit('resultView');
     app.setStatus(t('Statik: {n} Fälle in {ms} ms · {d} Freiheitsgrade', { n: Object.keys(res.cases).length, ms: Math.round(res.ms), d: res.stats?.dofs ?? '–' }));
@@ -156,7 +157,7 @@ export async function runStatic(app, nonlinear, opts) {
     res.warnings = (res.warnings || []).map(femMessage);
     const important = res.warnings.filter((w) => !/automatisch gehalten/.test(w));
     if (important.length) toast(important[0], 'warn', 5000);
-    if (st.tab !== 'static' && st.tab !== 'design' && st.tab !== 'buckling') app.setTab('static');
+    if (!['static', 'buckling', 'rc', 'steel', 'timber'].includes(st.tab)) app.setTab('static');
     else app.showSide('results');
     return true;
   } catch (e) {
@@ -343,40 +344,67 @@ export function designCaseKeys(st) {
   return { keys: Object.keys(s.cases).filter((k) => k.startsWith('LC:')), basis: t('Lastfälle (ohne Teilsicherheitsbeiwerte!)'), warn: true };
 }
 
-export async function runDesign(app, kind) {
+// beams/ribs (axis + half width): the slab shear check is skipped next to them (beam shear governs)
+function beamSegments(st) {
+  const out = [];
+  for (const l of st.model.lines) {
+    if (!l.element || !['beam', 'rib'].includes(l.element.type)) continue;
+    const sec = st.idx.sections.get(l.element.section);
+    const a = st.idx.nodes.get(l.n1), b = st.idx.nodes.get(l.n2);
+    out.push({ a: [a.x, a.y, a.z], b: [b.x, b.y, b.z], hb: (sec?.dims?.b || sec?.dims?.d || 0.3) / 2 });
+  }
+  return out;
+}
+
+export async function runDesign(app, kind, { quiet = false } = {}) {
   const st = app.store;
   if (!st.results.static) {
     const ok = await runStatic(app, false);
-    if (!ok) return;
+    if (!ok) return false;
   }
   const { keys, basis, warn } = designCaseKeys(st);
   const opts = { code: st.model.settings.code };
   const mesh = st.results.mesh;
+  st.results.designBasis = { keys, basis, warn };
+  const say = (msg, type, ms) => { if (!quiet) toast(msg, type, ms); };
   try {
     if (kind === 'steel') {
       st.results.steel = checkSteelMembers(st.model, mesh, st.results.static, keys, opts);
       st.setResultView({ kind: 'steel', component: 'eta' });
       const n = st.results.steel.length, f = st.results.steel.filter((r) => r.eta > 1).length;
-      toast(n ? t('Stahlbemessung: {n} Stäbe, {f} nicht erfüllt · Basis: {b}', { n, f, b: basis }) : t('Keine Stahlstäbe gefunden.'), n ? (f ? 'warn' : 'ok') : 'info', 5000);
+      say(n ? t('Stahlbemessung: {n} Stäbe, {f} nicht erfüllt · Basis: {b}', { n, f, b: basis }) : t('Keine Stahlstäbe gefunden.'), n ? (f ? 'warn' : 'ok') : 'info', 5000);
     } else if (kind === 'timber') {
       st.results.timber = checkTimberMembers(st.model, mesh, st.results.static, keys, opts);
       st.setResultView({ kind: 'timber', component: 'eta' });
       const n = st.results.timber.length, f = st.results.timber.filter((r) => r.eta > 1).length;
-      toast(n ? t('Holzbemessung: {n} Stäbe, {f} nicht erfüllt · Basis: {b}', { n, f, b: basis }) : t('Keine Holzstäbe gefunden.'), n ? (f ? 'warn' : 'ok') : 'info', 5000);
+      say(n ? t('Holzbemessung: {n} Stäbe, {f} nicht erfüllt · Basis: {b}', { n, f, b: basis }) : t('Keine Holzstäbe gefunden.'), n ? (f ? 'warn' : 'ok') : 'info', 5000);
     } else if (kind === 'rc') {
-      st.results.rc = designRCSurfaces(st.model, mesh, st.results.static, keys, opts);
-      st.setResultView({ kind: 'rc', component: 'axb' });
-      toast(t('Stahlbeton Flächen bemessen · Basis: {b}', { b: basis }), 'ok');
+      // punching zones (geometry only) → surfaces (slab shear outside these zones) → punching with ρl
+      const pre = checkPunching(st.model, mesh, st.results.static, keys, opts);
+      st.results.rc = designRCSurfaces(st.model, mesh, st.results.static, keys, { ...opts, shearExclude: pre.zones, shearExcludeSegs: beamSegments(st) });
+      st.results.punching = checkPunching(st.model, mesh, st.results.static, keys, { ...opts, rc: st.results.rc });
+      const doms = st.results.rc.domains;
+      if (!doms.length) say(t('Keine Stahlbetonflächen gefunden (Material Beton erforderlich).'), 'info');
+      else {
+        const rv = st.resultView;
+        st.setResultView({ kind: 'rc', component: /^a[xy][bt]$|vRatio|punch/.test(rv.component) && rv.kind === 'rc' ? rv.component : 'axb', rcMode: rv.rcMode || 'req' });
+        const pf = st.results.punching.items.filter((i) => i.eta > 1).length;
+        say(t('{n} Flächen bemessen · Basis: {b}', { n: doms.length, b: basis }) + (st.results.punching.items.length ? ' · ' + t('Durchstanzen: {n} Stellen, {f} mit η > 1', { n: st.results.punching.items.length, f: pf }) : ''), pf ? 'warn' : 'ok', 5000);
+      }
     } else if (kind === 'rcBeam') {
       st.results.rcBeams = designRCBeams(st.model, mesh, st.results.static, keys, opts);
-      st.setResultView({ kind: 'rc', component: 'AsBot' });
-      toast(st.results.rcBeams.length ? t('{n} Betonbalken bemessen · Basis: {b}', { n: st.results.rcBeams.length, b: basis }) : t('Keine Betonbalken gefunden.'), 'ok');
+      st.setResultView({ kind: 'rc', component: ['AsBot', 'AsTop', 'Asw'].includes(st.resultView.component) ? st.resultView.component : 'AsBot' });
+      const n = st.results.rcBeams.length, tb = st.results.rcBeams.filter((b) => b.tBeam).length;
+      say(n ? t('{n} Betonbalken bemessen ({t} als Plattenbalken) · Basis: {b}', { n, t: tb, b: basis }) : t('Keine Betonbalken gefunden (Material Beton, Querschnitt Rechteck oder T).'), n ? 'ok' : 'info', 5000);
     }
-    if (warn) toast(t('Achtung: keine Kombinationen vorhanden – bemessen wird mit charakteristischen Lastfällen.'), 'warn', 6000);
+    if (warn) say(t('Achtung: keine Kombinationen vorhanden – bemessen wird mit charakteristischen Lastfällen.'), 'warn', 6000);
     st.emit('results');
-    if (st.tab !== 'design') app.setTab('design'); else app.showSide('results');
+    const tab = kind === 'steel' ? 'steel' : kind === 'timber' ? 'timber' : 'rc';
+    if (st.tab !== tab) app.setTab(tab); else app.showSide('results');
+    return true;
   } catch (e) {
     console.error(e);
     toast(t('Bemessung fehlgeschlagen: {m}', { m: e.message }), 'err', 6000);
+    return false;
   }
 }

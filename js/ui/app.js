@@ -15,7 +15,9 @@ import { importDXF, exportDXF } from '../io/dxf.js';
 import { welcomeDialog } from './dialogs/help.js';
 import { runStatic } from './dialogs/analysis.js';
 import { DEFAULT_PSI } from './dialogs/manage.js';
-import { defaultCaseKey, getCase } from './results-data.js';
+import { defaultCaseKey, getCase, caseLabel } from './results-data.js';
+import { memberDetail, rcBeamDetail, rcPointDialog, nearestCorner } from './dialogs/rc.js';
+import { checkName, POS_NAMES } from './design-text.js';
 import { lineForces } from '../fem/index.js';
 
 export class App {
@@ -149,7 +151,7 @@ export class App {
       const b = h('button.tab' + (store.tab === m.id ? '.active' : ''), {
         onclick: () => this.setTab(m.id),
         ondblclick: () => this.ribbonWrap.classList.toggle('collapsed'),
-        tip: [t(m.label), t('Doppelklick klappt die Werkzeugleiste ein/aus'), `Alt+${i + 1}`],
+        tip: [t(m.label), t('Doppelklick klappt die Werkzeugleiste ein/aus'), i < 10 ? `Alt+${(i + 1) % 10}` : undefined],
       }, h('span.tab-num', String(i + 1)), h('span.tab-label', t(m.label)), done ? h('span.tab-state') : null);
       b.style.setProperty('--mod', `var(--p-${m.mod})`);
       el.appendChild(b);
@@ -174,20 +176,25 @@ export class App {
       case 'static': return !!r.static;
       case 'vibration': return !!r.modal;
       case 'buckling': return !!r.buckling;
-      case 'design': return !!(r.steel || r.rc || r.timber || r.rcBeams);
+      case 'rc': return !!(r.rc || r.rcBeams);
+      case 'steel': return !!r.steel;
+      case 'timber': return !!r.timber;
       default: return false;
     }
   }
 
   setTab(id) {
+    if (id === 'design') id = 'rc'; // old module id
     store.tab = id;
-    const autoRes = { static: 'static', vibration: 'modal', buckling: 'buckling' }[id];
-    if (autoRes && store.results[autoRes === 'static' ? 'static' : autoRes] && store.resultView.kind !== autoRes) this.showResults(autoRes);
+    const autoRes = { static: 'static', vibration: 'modal', buckling: 'buckling', steel: 'steel', timber: 'timber' }[id];
+    const r = store.results;
+    if (autoRes && r[autoRes] && store.resultView.kind !== autoRes) this.showResults(autoRes);
+    else if (id === 'rc' && (r.rc || r.rcBeams) && store.resultView.kind !== 'rc') this.showResults('rc', r.rc ? undefined : 'AsBot');
+    else if (['rc', 'steel', 'timber'].includes(id) && store.resultView.kind && store.resultView.kind !== (autoRes || 'rc')) this.hideResults();
     if (['geometry', 'elements', 'loads', 'mesh'].includes(id) && store.resultView.kind) this.hideResults();
-    if (id === 'design' && !['steel', 'rc', 'timber'].includes(store.resultView.kind) && store.resultView.kind) this.hideResults();
     this.renderTabs();
     this.renderRibbon();
-    if (['static', 'vibration', 'buckling', 'design'].includes(id)) this.showSide('results');
+    if (['static', 'vibration', 'buckling', 'rc', 'steel', 'timber'].includes(id)) this.showSide('results');
     else if (this.sideTab === 'results') this.showSide('props');
   }
 
@@ -300,7 +307,7 @@ export class App {
     tg(t('Linie'), 'line', v.snapLine, () => store.setView({ snapLine: !v.snapLine }), t('Am nächstgelegenen Punkt auf Linien fangen'));
     tg(t('Ortho'), 'ortho', v.ortho, () => store.setView({ ortho: !v.ortho }), t('Nur achsparallel zeichnen (auch mit gedrückter Shift-Taste)'));
     tg(`${v.workplane.plane} ${fmtNum(toDisplay('len', v.workplane.offset))} ${unitLabel('len')}`, 'plane', false, () => this.setTab('geometry'), t('Aktive Arbeitsebene'), false);
-    tg(store.model.settings.code === 'SIA' ? 'SIA' : 'Eurocode', store.model.settings.code === 'SIA' ? 'swiss' : 'eu', false, () => this.setTab('design'), t('Aktive Normenfamilie'), false);
+    tg(store.model.settings.code === 'SIA' ? 'SIA' : 'Eurocode', store.model.settings.code === 'SIA' ? 'swiss' : 'eu', false, () => this.setTab(['rc', 'steel', 'timber'].includes(store.tab) ? store.tab : 'rc'), t('Aktive Normenfamilie'), false);
   }
 
   setHint(html) { this.hintEl.innerHTML = html ? `<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg><span>${html}</span>` : ''; }
@@ -387,6 +394,61 @@ export class App {
   hideResults() {
     if (!store.resultView.kind) return;
     store.setResultView({ kind: null, animate: false });
+  }
+
+  // design result probe (AxisVM: values at the cursor; double-click opens the detailed design)
+  showDesignInfo(hit) {
+    const el = this.infoEl, rv = store.resultView, R = store.results, mesh = R.mesh;
+    const rows = [];
+    const pct = (v) => `${((v ?? 0) * 100).toFixed(0)} %`;
+    if ((rv.kind === 'steel' || rv.kind === 'timber') && hit.kind === 'line') {
+      const r = (rv.kind === 'steel' ? R.steel : R.timber)?.find((x) => x.line === hit.id);
+      if (!r) { el.style.display = 'none'; return; }
+      rows.push([t('Stab {id}', { id: hit.id }), pct(r.eta)]);
+      for (const [k, c] of Object.entries(r.checks || {}).sort((a, b) => (b[1].eta ?? 0) - (a[1].eta ?? 0)).slice(0, 5)) rows.push([checkName(k), pct(c.eta)]);
+      rows.push([t('Doppelklick: Details'), '']);
+    } else if (rv.kind === 'rc' && hit.kind === 'line' && R.rcBeams) {
+      const r = R.rcBeams.find((b) => b.line === hit.id);
+      if (!r?.x?.length) { el.style.display = 'none'; return; }
+      const L = r.x[r.x.length - 1] || 1, x = (hit.t ?? 0.5) * L;
+      let k = 0;
+      for (let j = 1; j < r.x.length; j++) if (Math.abs(r.x[j] - x) < Math.abs(r.x[k] - x)) k = j;
+      rows.push([t('Balken {id}', { id: hit.id }), `x = ${fmt('len', r.x[k])}`]);
+      if (r.env) rows.push(['My max / min', `${fmt('moment', r.env.MyMax[k], { unit: false })} / ${fmt('moment', r.env.MyMin[k])}`]);
+      rows.push([t('As unten'), fmt('reinfBeam', r.AsBot[k])], [t('As oben'), fmt('reinfBeam', r.AsTop[k])], ['asw', fmt('reinf', r.Asw[k])], [t('Doppelklick: Details'), '']);
+    } else if (rv.kind === 'rc' && rv.component === 'punch' && hit.kind === 'node') {
+      const it = R.punching?.items.find((i) => i.node === hit.id);
+      if (!it) { el.style.display = 'none'; return; }
+      rows.push([t('Knoten {id}', { id: hit.id }), t(POS_NAMES[it.type])], ['VEd', fmt('force', it.VEd)], ['d', fmt('dim', it.d)], ['η', pct(it.eta)],
+        [it.fail ? t('verstärken') : it.needsReinf ? t('Durchstanzbewehrung erforderlich') : t('ohne Bewehrung erfüllt'), '']);
+    } else if (rv.kind === 'rc' && R.rc && (hit.kind === 'domain' || hit.kind === 'node') && hit.p) {
+      const dom = hit.kind === 'domain' ? hit.id : mesh.shells.find((s) => s.nodes.includes(mesh.modelNodeToMesh?.[hit.id]))?.domain;
+      const cn = dom != null ? nearestCorner(mesh, dom, hit.p) : null;
+      if (!cn) { el.style.display = 'none'; return; }
+      const k = cn.e * 4 + cn.c, A = R.rc.asCorner;
+      rows.push([t('Fläche {id}', { id: dom }), '']);
+      ['axb', 'ayb', 'axt', 'ayt'].forEach((n, j) => rows.push([n, fmt('reinf', A[k * 4 + j])]));
+      const vr = R.rc.vRatio[k];
+      rows.push(['vEd/vRd,c', vr < 0 ? t('Durchstanzbereich') : pct(vr)]);
+      const gi = R.rc.gov[k * 4 + (/^a[xy][bt]$/.test(rv.component) ? ['axb', 'ayb', 'axt', 'ayt'].indexOf(rv.component) : 0)];
+      if (gi >= 0) rows.push([t('massgebend'), caseLabel(store, R.rc.keys[gi])]);
+      rows.push([t('Doppelklick: Berechnung'), '']);
+    } else { el.style.display = 'none'; return; }
+    clear(el).appendChild(h('div.kv', { style: { minWidth: '180px' } }, rows.flatMap(([a, b], i) => (i === 0 ? [h('b', a), h('span.muted', b)] : [h('span', a), h('span', b)]))));
+    el.style.display = '';
+  }
+
+  // double-click on a design result: member details or the design trace at a slab point
+  openResultDetail(hit) {
+    const rv = store.resultView, R = store.results;
+    if (!hit || !R.mesh) return false;
+    if ((rv.kind === 'steel' || rv.kind === 'timber') && hit.kind === 'line') { memberDetail(this, rv.kind, hit.id); return true; }
+    if (rv.kind === 'rc' && hit.kind === 'line' && R.rcBeams?.some((b) => b.line === hit.id)) { rcBeamDetail(this, hit.id); return true; }
+    if (rv.kind === 'rc' && R.rc && hit.kind === 'domain' && hit.p) {
+      const cn = nearestCorner(R.mesh, hit.id, hit.p);
+      if (cn) { rcPointDialog(this, cn.e, cn.c); return true; }
+    }
+    return false;
   }
 
   /* ---------------- selection helpers ---------------- */
@@ -513,6 +575,7 @@ export class App {
   showHoverInfo(hit) {
     const el = this.infoEl, rv = store.resultView, mesh = store.results.mesh;
     const hide = () => { el.style.display = 'none'; };
+    if (hit && mesh && ['rc', 'steel', 'timber'].includes(rv.kind)) return this.showDesignInfo(hit);
     if (!hit || !mesh || !(rv.kind === 'static' || rv.kind === 'spectrum')) return hide();
     const cs = getCase(store, rv.caseKey);
     if (!cs) return hide();
@@ -535,7 +598,7 @@ export class App {
       let k = 0;
       for (let j = 1; j < f.x.length; j++) if (Math.abs(f.x[j] - x) < Math.abs(f.x[k] - x)) k = j;
       rows.push([t('Stab {id}', { id: hit.id }), `x = ${fmt('len', f.x[k])}`]);
-      [['N', 'force'], ['Vy', 'force'], ['Vz', 'force'], ['T', 'moment'], ['My', 'moment'], ['Mz', 'moment']].forEach(([c, q]) => rows.push([c, fmt(q, f[c][k])]));
+      [['N', 'force', 'Nx'], ['Vy', 'force'], ['Vz', 'force'], ['T', 'moment', 'Tx'], ['My', 'moment'], ['Mz', 'moment']].forEach(([c, q, lab]) => rows.push([lab || c, fmt(q, f[c][k])]));
     } else return hide();
     clear(el).appendChild(h('div.kv', { style: { minWidth: '170px' } }, rows.flatMap(([a, b], i) => (i === 0 ? [h('b', a), h('span.muted', b)] : [h('span', a), h('span', b)]))));
     el.style.display = '';
@@ -600,7 +663,7 @@ export class App {
         if (p) [g.gammaSup, g.gammaInf, g.psi0, g.psi1, g.psi2] = p;
       }
     }, { keepResults: true });
-    for (const k of ['steel', 'rc', 'rcBeams', 'timber']) store.results[k] = null;
+    for (const k of ['steel', 'rc', 'rcBeams', 'punching', 'timber']) store.results[k] = null;
     if (['steel', 'rc', 'timber'].includes(store.resultView.kind)) store.setResultView({ kind: null });
     toast((code === 'SIA' ? t('Normenfamilie: SIA 260–265 (Schweiz)') : t('Normenfamilie: Eurocode EN 1990–1998')) + ' · ' + t('γ/ψ-Beiwerte der Lastgruppen angepasst. Kombinationen ggf. neu erzeugen.'), 'ok', 5000);
     this.renderAll();
@@ -759,8 +822,8 @@ export class App {
       if (this.tools.key(e)) { e.preventDefault(); return; }
       const name = e.key.length === 1 ? e.key.toUpperCase() : ({ Delete: 'Del' }[e.key] || e.key);
       let combo = (e.ctrlKey || e.metaKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '') + name;
-      if (e.altKey && /^Digit[1-9]$/.test(e.code)) {
-        const m = MODULES[+e.code.slice(5) - 1];
+      if (e.altKey && /^Digit[0-9]$/.test(e.code)) {
+        const m = MODULES[(+e.code.slice(5) || 10) - 1];
         if (m) { e.preventDefault(); this.setTab(m.id); }
         return;
       }
