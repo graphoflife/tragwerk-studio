@@ -1237,4 +1237,6 @@ export const EN = {
   'Auswahl löschen – bei gemischter Auswahl lässt sich wählen, welche Objektarten (Knoten, Linien, Stäbe, Flächen, Lager, Lasten) gelöscht werden': 'Delete the selection – with a mixed selection you choose which kinds (nodes, lines, members, domains, supports, loads) are deleted',
   'Alle sichtbaren Objekte auswählen (inkl. Lager und Lasten des aktiven Lastfalls, je nach Auswahlfilter)': 'Select all visible objects (incl. supports and loads of the active load case, depending on the selection filter)',
   '<b>{n}</b> Lager/Lasten ausgewählt · Werte rechts bearbeiten · <b>Entf</b> löschen': '<b>{n}</b> supports/loads selected · edit values on the right · <b>Del</b> deletes',
+  'Neu, Öffnen, Speichern, Beispiele, DXF, Modellinfo': 'New, open, save, examples, DXF, model info',
+  'Schalter: ein/aus': 'switch: on/off',
 };

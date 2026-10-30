@@ -191,7 +191,15 @@ export function createCommands(app) {
     codeEC: { label: 'Eurocode', desc: 'Normenfamilie Eurocode (EN 1990 – EN 1998)', icon: 'eu', run: () => app.setCode('EC'), active: () => st.model.settings.code !== 'SIA' },
     codeSIA: { label: 'SIA', desc: 'Schweizer Normen SIA 260 – 265', icon: 'swiss', run: () => app.setCode('SIA'), active: () => st.model.settings.code === 'SIA' },
   };
-  for (const [id, c] of Object.entries(C)) { c.id = id; c.label = t(c.label); c.desc = t(c.desc); }
+  // on/off switches (as opposed to actions and tool/view modes) get a distinct toggle look
+  const TOGGLES = ['persp', 'renderFull', 'labelsNodes', 'labelsLines', 'labelsValues', 'showLoads', 'showSupports', 'showAxes', 'showMesh', 'showGrid', 'showNodes', 'selfWeight'];
+  for (const id of TOGGLES) C[id].toggle = true;
+  for (const [id, c] of Object.entries(C)) {
+    c.id = id;
+    c.label = t(c.label);
+    c.desc = t(c.desc);
+    c.kind = c.toggle ? 'toggle' : c.active ? 'mode' : 'action';
+  }
   return C;
 }
 

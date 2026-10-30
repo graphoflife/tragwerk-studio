@@ -44,25 +44,25 @@ export class App {
   /* ---------------- layout ---------------- */
   build() {
     const root = clear(this.root);
-    // header
-    this.modelNameEl = h('button.model-name', { onclick: () => this.cmds.modelInfo.run(), tip: [t('Modellinfo'), t('Name, Autor und Norm bearbeiten')] });
+    // one top bar: logo · module tabs · file menu (model name) · search · undo/redo · settings
+    this.modelNameEl = h('button.file-btn', { dataset: { popanchor: '1' }, onclick: () => this.openFileMenu(), tip: [t('Datei'), t('Neu, Öffnen, Speichern, Beispiele, DXF, Modellinfo')] });
     this.undoBtn = this.iconBtn('undo');
     this.redoBtn = this.iconBtn('redo');
+    this.tabsEl = h('nav.tabs');
     const header = h('header.header',
-      h('div.brand', h('div.brand-logo', ic('logo')), h('div', h('div.brand-name', 'Tragwerk Studio'), h('div.brand-sub', t('3D-FEM für Tragwerke')))),
-      this.modelNameEl,
-      h('button.header-search', { onclick: () => this.openPalette() }, ic('search'), h('span', t('Befehl suchen …')), h('span.kbd', 'Ctrl K')),
+      h('div.brand', { tip: ['Tragwerk Studio', t('3D-FEM für Tragwerke')] }, h('div.brand-logo', ic('logo')), h('div.brand-name', 'Tragwerk Studio')),
+      this.tabsEl,
       h('div.header-actions',
+        this.modelNameEl,
+        this.iconBtn('palette'), h('div.sep-v'),
         this.undoBtn, this.redoBtn, h('div.sep-v'),
-        this.iconBtn('new', 'hide-sm'), this.iconBtn('open', 'hide-sm'), this.iconBtn('save', 'hide-sm'), this.iconBtn('examples', 'hide-sm'), h('div.sep-v'),
-        this.themeBtn = this.iconBtn('theme'),
-        h('button.icon-btn', { onclick: () => this.toggleLang(), tip: [t('Sprache'), 'Deutsch / English'] }, h('span', { style: { fontWeight: 700, fontSize: '11.5px' } }, getLang().toUpperCase())),
-        this.iconBtn('settings', 'hide-sm'), this.iconBtn('help')));
+        this.themeBtn = this.iconBtn('theme', 'hide-sm'),
+        h('button.icon-btn.hide-sm', { onclick: () => this.toggleLang(), tip: [t('Sprache'), 'Deutsch / English'] }, h('span', { style: { fontWeight: 700, fontSize: '11.5px' } }, getLang().toUpperCase())),
+        this.iconBtn('settings', 'hide-sm'), this.iconBtn('help', 'hide-sm')));
 
-    // tabs + ribbon
-    this.tabsEl = h('div.tabs');
+    // ribbon (module tools)
     this.ribbonEl = h('div.ribbon');
-    this.ribbonWrap = h('div.ribbon-wrap', this.tabsEl, this.ribbonEl);
+    this.ribbonWrap = h('div.ribbon-wrap', this.ribbonEl);
 
     // main
     this.railEl = h('nav.rail');
@@ -79,6 +79,7 @@ export class App {
     this.sideBody = h('div.side-body');
     this.sideEl = h('aside.side', this.sideTabsEl, this.sideBody);
     this.mainEl = h('div.main', this.railEl, this.vpEl, this.sideEl);
+    new ResizeObserver(() => this.fitTabs()).observe(header);
     // side panel: overlay (hidden by default) on narrow screens, docked on wide ones
     const narrow = matchMedia('(max-width: 820px)');
     if (narrow.matches) this.mainEl.classList.add('panel-hidden');
@@ -105,14 +106,20 @@ export class App {
     return h('button.icon-btn', { class: cls, onclick: () => c.run(), tip: [c.label, c.desc, c.kbd] }, ic(c.icon));
   }
 
+  // Button for a command. Toggles (on/off switches) carry an indicator light; modes show a pressed state.
+  cmdButton(id, base = 'icon-btn') {
+    const c = this.cmds[id];
+    const desc = c.kind === 'toggle' ? `${c.desc} · ${t('Schalter: ein/aus')}` : c.desc;
+    const b = h(`button.${base}.${c.kind}` + (id.startsWith('run') ? '.primary' : ''), { onclick: () => c.run(), tip: [c.label, desc, c.kbd] }, ic(c.icon),
+      c.kind === 'toggle' ? h('span.led') : null);
+    b.dataset.cmd = id;
+    if (c.kind === 'toggle') b.setAttribute('role', 'switch');
+    return b;
+  }
+
   buildRail() {
     const r = clear(this.railEl);
-    const btn = (id) => {
-      const c = this.cmds[id];
-      const b = h('button.icon-btn', { onclick: () => c.run(), tip: [c.label, c.desc, c.kbd] }, ic(c.icon));
-      b.dataset.cmd = id;
-      return b;
-    };
+    const btn = (id) => this.cmdButton(id);
     const filterBtn = h('button.icon-btn', { dataset: { popanchor: '1' }, onclick: () => this.openSelFilter(filterBtn), tip: [t('Auswahlfilter'), t('Festlegen, welche Objekttypen ausgewählt werden können')] }, ic('filter'));
     r.append(btn('toolSelect'), btn('toolOrbit'), h('div.sep-h'), filterBtn, btn('selectAll'), btn('invertSel'), h('div.sep-h'),
       btn('hideSel'), btn('isolateSel'), btn('showAll'), h('div.sep-h'), btn('toolMeasure'), btn('delete'), h('div.sep-h'), btn('tables'), btn('panel'));
@@ -120,12 +127,7 @@ export class App {
 
   buildVpToolbar() {
     const tb = clear(this.vpToolbar);
-    const btn = (id) => {
-      const c = this.cmds[id];
-      const b = h('button.icon-btn', { onclick: () => c.run(), tip: [c.label, c.desc, c.kbd] }, ic(c.icon));
-      b.dataset.cmd = id;
-      return b;
-    };
+    const btn = (id) => this.cmdButton(id);
     const disp = h('button.icon-btn', { dataset: { popanchor: '1' }, onclick: () => this.openDisplayOptions(disp), tip: [t('Darstellung'), t('Beschriftungen, Lasten, Lager, Achsen, Netz ein-/ausblenden')] }, ic('sliders'));
     tb.append(btn('zoomFit'), h('div.sep-v'), btn('viewIso'), btn('viewTop'), btn('viewFront'), btn('viewSide'), btn('persp'), h('div.sep-v'),
       btn('renderWire'), btn('renderSolid'), btn('renderFull'), h('div.sep-v'), disp, btn('screenshot'));
@@ -152,6 +154,14 @@ export class App {
       b.style.setProperty('--mod', `var(--p-${m.mod})`);
       el.appendChild(b);
     });
+    this.fitTabs();
+  }
+
+  // collapse inactive tab labels only when the full labels do not fit into the top bar
+  fitTabs() {
+    const el = this.tabsEl;
+    el.classList.remove('compact');
+    if (el.scrollWidth > el.clientWidth + 1) el.classList.add('compact');
   }
 
   moduleDone(id) {
@@ -196,11 +206,8 @@ export class App {
   }
 
   ribbonButton(id) {
-    const c = this.cmds[id];
-    if (!c) return h('span', id);
-    const b = h('button.rbtn' + (id.startsWith('run') ? '.primary' : ''), { onclick: () => c.run(), tip: [c.label, c.desc, c.kbd] }, ic(c.icon));
-    b.dataset.cmd = id;
-    return b;
+    if (!this.cmds[id]) return h('span', id);
+    return this.cmdButton(id, 'rbtn');
   }
 
   customControl(kind) {
@@ -254,13 +261,15 @@ export class App {
   refreshChrome() {
     const act = (root) => root.querySelectorAll('[data-cmd]').forEach((b) => {
       const c = this.cmds[b.dataset.cmd];
-      b.classList.toggle('active', !!c?.active?.());
+      const on = !!c?.active?.();
+      b.classList.toggle('active', on);
+      if (c?.kind === 'toggle') b.setAttribute('aria-checked', String(on));
     });
     act(this.ribbonEl); act(this.railEl); act(this.vpToolbar);
     this.undoBtn.disabled = !store.undoStack.length;
     this.redoBtn.disabled = !store.redoStack.length;
     tip(this.undoBtn, t('Rückgängig'), store.undoStack.length ? store.undoStack[store.undoStack.length - 1].label : '', 'Ctrl+Z');
-    clear(this.modelNameEl).append(ic('fileText'), h('span', store.model.meta.name || t('Unbenannt')), ...(store.dirty ? [h('span.dirty-dot', { tip: [t('Ungespeicherte Änderungen')] })] : []));
+    clear(this.modelNameEl).append(ic('fileText'), h('span.fname', store.model.meta.name || t('Unbenannt')), ...(store.dirty ? [h('span.dirty-dot', { tip: [t('Ungespeicherte Änderungen')] })] : []), ic('chevronDown', 'chev'));
     clear(this.themeBtn).appendChild(ic(this.isDark() ? 'sun' : 'moon'));
     // empty state
     clear(this.emptyEl);
@@ -280,8 +289,9 @@ export class App {
   renderStatus() {
     const v = store.view;
     const el = clear(this.statusToggles);
-    const tg = (label, iconName, on, onClick, desc) => {
-      const b = h('button.status-btn' + (on ? '.on' : ''), { onclick: onClick, tip: [label, desc] }, ic(iconName), label);
+    const tg = (label, iconName, on, onClick, desc, isToggle = true) => {
+      const b = h('button.status-btn' + (isToggle ? '.toggle' : '') + (on ? '.on' : ''), { onclick: onClick, tip: [label, isToggle ? `${desc} · ${t('Schalter: ein/aus')}` : desc] },
+        isToggle ? h('span.led') : ic(iconName), label);
       el.appendChild(b);
     };
     tg(t('Raster'), 'grid', v.grid.snap, () => store.setView({ grid: { ...v.grid, snap: !v.grid.snap } }), t('Am Raster fangen'));
@@ -289,8 +299,8 @@ export class App {
     tg(t('Mitte'), 'split', v.snapMid, () => store.setView({ snapMid: !v.snapMid }), t('An Linienmitten fangen'));
     tg(t('Linie'), 'line', v.snapLine, () => store.setView({ snapLine: !v.snapLine }), t('Am nächstgelegenen Punkt auf Linien fangen'));
     tg(t('Ortho'), 'ortho', v.ortho, () => store.setView({ ortho: !v.ortho }), t('Nur achsparallel zeichnen (auch mit gedrückter Shift-Taste)'));
-    tg(`${v.workplane.plane} ${fmtNum(toDisplay('len', v.workplane.offset))} ${unitLabel('len')}`, 'plane', false, () => this.setTab('geometry'), t('Aktive Arbeitsebene'));
-    tg(store.model.settings.code === 'SIA' ? 'SIA' : 'Eurocode', store.model.settings.code === 'SIA' ? 'swiss' : 'eu', false, () => this.setTab('design'), t('Aktive Normenfamilie'));
+    tg(`${v.workplane.plane} ${fmtNum(toDisplay('len', v.workplane.offset))} ${unitLabel('len')}`, 'plane', false, () => this.setTab('geometry'), t('Aktive Arbeitsebene'), false);
+    tg(store.model.settings.code === 'SIA' ? 'SIA' : 'Eurocode', store.model.settings.code === 'SIA' ? 'swiss' : 'eu', false, () => this.setTab('design'), t('Aktive Normenfamilie'), false);
   }
 
   setHint(html) { this.hintEl.innerHTML = html ? `<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg><span>${html}</span>` : ''; }
@@ -439,6 +449,17 @@ export class App {
     s.domains.forEach((id) => idx.domains.get(id).nodes.forEach((n) => { const nn = idx.nodes.get(n); pts.push([nn.x, nn.y, nn.z]); }));
     for (const g of this.vp.glyphPicks || []) if ((g.kind === 'support' ? s.supports : s.loads).has(g.id)) pts.push(...g.pts, ...g.segs.flat());
     this.vp.zoomTo(pts);
+  }
+
+  openFileMenu() {
+    const C = this.cmds;
+    const it = (id) => ({ label: C[id].label, icon: C[id].icon, kbd: C[id].kbd, onClick: () => C[id].run() });
+    openMenu(this.modelNameEl, [
+      { title: store.model.meta.name || t('Unbenannt') },
+      it('new'), it('open'), it('save'), it('examples'), 'sep',
+      it('importDxf'), it('exportDxf'), it('screenshot'), 'sep',
+      it('modelInfo'), it('report'),
+    ]);
   }
 
   openSelFilter(anchor) {

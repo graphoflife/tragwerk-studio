@@ -44,6 +44,8 @@ Alternativ ohne Actions: *Source: Deploy from a branch*, Branch `main`, Ordner `
 
 ## Bedienung
 
+Die obere Leiste vereint Module, Datei-Menü (mit Modellname), Befehlssuche und Einstellungen; darunter liegen die Werkzeuge des aktiven Moduls als Symbolknöpfe (Name und Kürzel im Tooltip). **Schalter** (Ein/Aus, z.B. Lokale Achsen, Beschriftungen, Fangen) sind umrandet und tragen ein Kontrolllämpchen, das grün leuchtet, wenn sie eingeschaltet sind; aktive Werkzeuge erscheinen gedrückt.
+
 | Aktion | Maus / Taste |
 |---|---|
 | Auswählen | Klick; Rechteck ziehen (→ Fenster, ← Kreuzen); `Shift` hinzufügen, `Ctrl` umschalten. Knoten, Linien/Stäbe, Flächen, **Lager und Lasten** (Pfeile des aktiven Lastfalls) sind einzeln wählbar; der Auswahlfilter links schränkt die Arten ein |
