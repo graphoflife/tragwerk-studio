@@ -158,6 +158,7 @@ class DrawBase {
       onCommit: (p, info) => { this.addPoint(p, info); this.T.lastPoint = p; if (this.T.cur === this) { this.newInput(); this.preview(); } },
       onPreview: () => this.preview(),
       onEnterEmpty: this.enterEmpty ? () => this.enterEmpty() : null,
+      surface: !!this.surfaceSnap,
     });
   }
   hint() { return `${this.stepHint()} · ${POINT_KEYS_HINT()}`; }
@@ -332,6 +333,32 @@ class MeasureTool extends DrawBase {
     this.result = t('Gemessen: <b>{d}</b> · ΔX {x} · ΔY {y} · ΔZ {z}', { d: fmt('len', V.len(d)), x: fmt('len', d[0]), y: fmt('len', d[1]), z: fmt('len', d[2]) });
     toast(t('Abstand {d}', { d: fmt('len', V.len(d)) }), 'info');
     this.pts = [];
+  }
+}
+
+// Section line (Schnittlinie): two points on surfaces → result diagram along the line
+class SectionTool extends DrawBase {
+  get surfaceSnap() { return true; }
+  prompt() { return this.pts.length ? t('Endpunkt') : t('Startpunkt'); }
+  stepHint() { return this.pts.length ? t('Endpunkt der Schnittlinie wählen (auf der Fläche)') : t('Startpunkt der Schnittlinie auf einer Fläche wählen'); }
+  extra() {
+    const a = this.lastPoint(), c = this.cur();
+    return { segments: a && c ? [[...a, ...c]] : [] };
+  }
+  addPoint(p) {
+    if (!this.pts.length) { this.pts.push(p); return; }
+    const a = this.pts[0];
+    this.pts = [];
+    if (V.len(V.sub(p, a)) < 1e-6) return;
+    const st = this.T.store;
+    let name;
+    st.commit(t('Schnittlinie'), (m) => {
+      m.sectionLines = m.sectionLines || [];
+      const id = m.sectionLines.reduce((x, s) => Math.max(x, s.id), 0) + 1;
+      name = `S${id}`;
+      m.sectionLines.push({ id, name, a: [...a], b: [...p], on: true });
+    }, { keepResults: true });
+    this.T.app.afterSectionLine?.(name);
   }
 }
 
@@ -589,6 +616,6 @@ class RotateTool extends TransformBase {
 }
 
 const TOOLS = {
-  select: SelectTool, orbit: OrbitTool, node: NodeTool, line: LineTool, rect: RectTool, polygon: PolygonTool, arc: ArcTool, measure: MeasureTool,
+  select: SelectTool, orbit: OrbitTool, node: NodeTool, line: LineTool, rect: RectTool, polygon: PolygonTool, arc: ArcTool, measure: MeasureTool, section: SectionTool,
   move: MoveTool, copy: CopyTool, rotate: RotateTool,
 };

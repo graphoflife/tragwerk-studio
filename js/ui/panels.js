@@ -13,6 +13,8 @@ import { rcParamsDialog, rcProvidedDialog, rcProtocolDialog, rcBeamDetail, membe
 import { designMessage, checkName, layerName, slabSuggestion, beamSuggestion, meshText, barsText, stirrupText, POS_NAMES } from './design-text.js';
 import { PALETTE_NAMES } from './vp-util.js';
 import { pointKeys } from './pointinput.js';
+import { renderParts } from './parts-ui.js';
+import { sectionLinesBlock } from './dialogs/sections.js';
 
 const TYPE_LABEL = { beam: 'Balken', truss: 'Fachwerkstab', rib: 'Rippe', rigid: 'Starrstab', spring: 'Feder', plate: 'Platte', shell: 'Schale', membrane: 'Scheibe' };
 const MAT_COLORS = { steel: 'var(--p-sky)', concrete: 'var(--p-slate)', timber: 'var(--p-peach)', aluminium: 'var(--p-teal)', other: 'var(--p-lilac)' };
@@ -364,6 +366,11 @@ function renderModel(app, el) {
     stat(s.loads, t('Lasten'), 'loadNode'),
     stat(s.combinations, t('Kombin.'), 'combination')));
 
+  // parts & storeys
+  const partBox = h('div');
+  renderParts(app, partBox);
+  el.appendChild(h('div.side-section.parts-section', h('div.side-section-title', ic('layers'), t('Teile & Geschosse')), partBox));
+
   // load cases
   const lcSec = h('div.side-section', h('div.side-section-title', ic('loadCase'), t('Lastfälle'), h('span.grow'),
     h('button.icon-btn', { onclick: () => app.addLoadCase(), tip: [t('Neuer Lastfall')] }, ic('plus')),
@@ -500,6 +507,7 @@ function staticPanel(app, el) {
     if (sum.sumR) rows.push([t('Σ Auflager Z'), fmt('force', sum.sumR[2])], [t('Σ Auflager X / Y'), `${fmt('force', sum.sumR[0], { unit: false })} / ${fmt('force', sum.sumR[1])}`]);
     el.appendChild(section(t('Übersicht'), h('div.res-max', rows.map(([k, v]) => h('div.r', h('span', k), h('b', v))))));
   }
+  if (st.results.mesh?.shells.length) el.appendChild(sectionLinesBlock(app));
   const s = st.results.static;
   if (s?.warnings?.length) el.appendChild(section(t('Hinweise der Berechnung'), ...s.warnings.slice(0, 8).map((w) => hintBox(w, 'warn'))));
   el.appendChild(h('button.btn.block', { onclick: () => app.cmds.tables.run() }, ic('table'), t('Ergebnistabellen')));
@@ -658,6 +666,7 @@ function rcPanel(app, el) {
   } else {
     el.appendChild(h('button.btn.block', { style: { marginBottom: '10px' }, onclick: () => runDesign(app, 'rcBeam') }, ic('beam'), t('Balken bemessen')));
   }
+  if (R.rc && R.mesh?.shells.length) el.appendChild(sectionLinesBlock(app));
   const w = [...(R.rc?.warnings || []), ...(R.rcBeams?.warnings || [])].filter((x) => !/vEd > vRd,c/.test(x)).map(designMessage);
   if (w.length) el.appendChild(section(t('Hinweise'), ...w.slice(0, 8).map((x) => hintBox(x, 'warn'))));
   el.appendChild(h('div.list', { style: { gap: '6px' } },

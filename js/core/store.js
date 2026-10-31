@@ -1,5 +1,6 @@
 // Central application state: model, selection, view settings, results, undo/redo, autosave.
 import { createModel, buildIndex } from './model.js';
+import { partsHidden, listParts } from './parts.js';
 
 const AUTOSAVE_KEY = 'ts.model';
 const MAX_HISTORY = 120;
@@ -28,7 +29,9 @@ class Store {
       showMesh: false,
       showNodes: true,
       showGrid: true,
-      hidden: { nodes: new Set(), lines: new Set(), domains: new Set() },
+      hidden: { nodes: new Set(), lines: new Set(), domains: new Set() },       // effective: manual ∪ parts
+      manualHidden: { nodes: new Set(), lines: new Set(), domains: new Set() }, // Ausblenden / Isolieren
+      parts: { on: new Set(), autoAdd: true },                                   // active part keys (see core/parts.js)
       workplane: { plane: 'XY', offset: 0 },
       grid: { step: 1, snap: true },
       snapNodes: true,
@@ -69,9 +72,12 @@ class Store {
   // Apply a model change as one undoable step. fn(model) mutates the model.
   commit(label, fn, { keepResults = false } = {}) {
     const before = JSON.stringify(this.model);
+    const maxId = (arr) => arr.reduce((a, x) => Math.max(a, x.id), 0);
+    const prev = { nodes: maxId(this.model.nodes), lines: maxId(this.model.lines), domains: maxId(this.model.domains) };
     let ret;
     try {
       ret = fn(this.model);
+      this.addNewToActiveParts(prev);
     } catch (e) {
       this.model = JSON.parse(before);
       this.idx = buildIndex(this.model);
@@ -90,6 +96,7 @@ class Store {
     this.model.meta.modified = new Date().toISOString();
     this.idx = buildIndex(this.model);
     this.pruneSelection();
+    this.applyVisibility();
     if (!this.idx.loadCases.has(this.activeLC)) this.activeLC = this.model.loadCases[0]?.id ?? null;
     this.dirty = true;
     if (!keepResults) this.clearResults(true);
@@ -120,7 +127,9 @@ class Store {
     if (!keepHistory) { this.undoStack.length = 0; this.redoStack.length = 0; }
     this.idx = buildIndex(this.model);
     this.selection = emptySelection();
-    this.view.hidden = { nodes: new Set(), lines: new Set(), domains: new Set() };
+    this.view.manualHidden = { nodes: new Set(), lines: new Set(), domains: new Set() };
+    this.view.parts.on = new Set();
+    this.applyVisibility();
     this.activeLC = this.model.loadCases[0]?.id ?? null;
     this.dirty = false;
     this.clearResults(true);
@@ -143,6 +152,57 @@ class Store {
   }
 
   /* ---------- selection ---------- */
+  // effective visibility = manually hidden ∪ hidden by the part filter
+  applyVisibility() {
+    const v = this.view, known = new Set(listParts(this.model).map((p) => p.key));
+    for (const k of [...v.parts.on]) if (!known.has(k)) v.parts.on.delete(k);
+    const ph = partsHidden(this.model, v.parts.on);
+    v.hidden = {};
+    for (const k of ['nodes', 'lines', 'domains']) {
+      v.hidden[k] = new Set(v.manualHidden[k]);
+      for (const id of [...v.hidden[k]]) if (!this.idx[k]?.has(id)) { v.hidden[k].delete(id); v.manualHidden[k].delete(id); }
+      if (ph) ph[k].forEach((id) => v.hidden[k].add(id));
+    }
+  }
+
+  setParts(on) {
+    this.view.parts.on = new Set(on);
+    this.applyVisibility();
+    this.pruneHiddenSelection();
+    this.emit('view');
+    this.emit('parts');
+  }
+
+  setManualHidden(h) {
+    this.view.manualHidden = h;
+    this.applyVisibility();
+    this.emit('view');
+  }
+
+  pruneHiddenSelection() {
+    const h = this.view.hidden;
+    for (const k of ['nodes', 'lines', 'domains']) for (const id of [...this.selection[k]]) if (h[k].has(id)) this.selection[k].delete(id);
+    this.emit('selection');
+  }
+
+  // newly drawn elements join the active user parts, so they stay visible while a part filter is on
+  addNewToActiveParts(prev) {
+    const v = this.view;
+    if (!v.parts.on.size || v.parts.autoAdd === false) return;
+    const userIds = [...v.parts.on].filter((k) => k.startsWith('u:')).map((k) => +k.slice(2));
+    if (!userIds.length) return;
+    const fresh = {
+      nodes: this.model.nodes.filter((x) => x.id > prev.nodes).map((x) => x.id),
+      lines: this.model.lines.filter((x) => x.id > prev.lines).map((x) => x.id),
+      domains: this.model.domains.filter((x) => x.id > prev.domains).map((x) => x.id),
+    };
+    if (!fresh.nodes.length && !fresh.lines.length && !fresh.domains.length) return;
+    for (const p of this.model.parts || []) {
+      if (!userIds.includes(p.id)) continue;
+      for (const k of ['nodes', 'lines', 'domains']) p[k] = [...new Set([...(p[k] || []), ...fresh[k]])];
+    }
+  }
+
   pruneSelection() {
     for (const k of SEL_KINDS) {
       for (const id of [...this.selection[k]]) if (!this.idx[k].has(id)) this.selection[k].delete(id);
@@ -211,7 +271,7 @@ function emptyResults() {
 }
 
 export function migrate(m) {
-  const base = { nodes: [], lines: [], domains: [], materials: [], sections: [], supports: [], loadGroups: [], loadCases: [], loads: [], combinations: [] };
+  const base = { nodes: [], lines: [], domains: [], materials: [], sections: [], supports: [], loadGroups: [], loadCases: [], loads: [], combinations: [], parts: [], storeys: [], sectionLines: [] };
   const model = { ...base, ...m };
   model.version = 1;
   model.meta = { name: 'Modell', author: '', description: '', ...(m.meta || {}) };

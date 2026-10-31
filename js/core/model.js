@@ -24,6 +24,7 @@ export function createModel(name) {
     loadCases: [{ id: 1, name: t('Eigengewicht'), group: 1, selfWeight: true }],
     loads: [],
     combinations: [],
+    parts: [], storeys: [], sectionLines: [],
   };
 }
 
@@ -197,6 +198,11 @@ export function removeEntities(model, { nodes = [], lines = [], domains = [], su
   model.nodes = model.nodes.filter((n) => !nodeSet.has(n.id));
   model.supports = model.supports.filter((s) => !(s.type === 'node' && nodeSet.has(s.node)) && !(s.type === 'line' && lineSet.has(s.line)) && !(s.type === 'surface' && domSet.has(s.domain)));
   model.loads = model.loads.filter((ld) => !(ld.node && nodeSet.has(ld.node)) && !(ld.line && lineSet.has(ld.line)) && !(ld.domain && domSet.has(ld.domain)));
+  for (const p of model.parts || []) {
+    p.nodes = (p.nodes || []).filter((id) => !nodeSet.has(id));
+    p.lines = (p.lines || []).filter((id) => !lineSet.has(id));
+    p.domains = (p.domains || []).filter((id) => !domSet.has(id));
+  }
 }
 
 // Remove nodes that are not used by any line, domain or support (optional cleanup)

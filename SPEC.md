@@ -94,6 +94,13 @@ model = {
 `ex` = projection of global X onto the plane; if its length < 1e-6 use projection of global Y.
 `ey = ez × ex`. Horizontal slab → ex=X, ey=Y, ez=Z.
 
+Model-level lists (optional, see `js/core/parts.js` and `js/core/seclines.js`):
+```js
+parts: [{ id, name, nodes:[ids], lines:[ids], domains:[ids] }],   // user parts (Teile)
+storeys: [{ id, z, name? }],                                      // storey levels (Geschosse)
+sectionLines: [{ id, name, a:[x,y,z], b:[x,y,z], on:true }],      // result section lines
+```
+
 ### 2.3 Material
 ```js
 { id, name, type: 'steel'|'concrete'|'timber'|'aluminium'|'other',

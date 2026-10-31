@@ -410,12 +410,20 @@ export class Viewport {
     if (v.showSupports) buildSupports(this, this.groups.supports);
     if (v.showLoads && !this.isResultMode() && this.store.activeLC) buildLoads(this, this.groups.loads, this.store.activeLC);
     if (v.showAxes) buildAxes(this, this.groups.axes);
+    // section lines in the model view (in result views they are drawn with their diagrams)
+    const sls = this.store.model.sectionLines || [];
+    if (sls.length && !this.isResultMode()) {
+      const seg = [];
+      for (const sl of sls) { seg.push(...sl.a, ...sl.b); this.groups.axes.add(label(sl.name, sl.a, 'big')); }
+      const ln = this.lines.make(seg, this.C.sel, 2, { dashed: true, dashSize: this.sz * 0.8, gapSize: this.sz * 0.5, opacity: 0.8 });
+      if (ln) this.groups.axes.add(ln);
+    }
   }
 
   buildResults() {
     disposeGroup(this.groups.results, this.lines);
     this.stopAnimation();
-    if (!this.isResultMode()) { this.resultInfo = null; return; }
+    if (!this.isResultMode()) { this.resultInfo = null; this.store.emit('legend', null); return; }
     try {
       this.resultInfo = buildResults(this, this.groups.results);
     } catch (e) {
@@ -729,7 +737,7 @@ export class Viewport {
 
   // Object snaps (node, line midpoint, nearest point on line) take priority over workplane snaps
   // (grid, free). Returns { p, kind, obj, label, node?, line? }.
-  snap(x, y, { from = null, ortho = false, allowMid = true } = {}) {
+  snap(x, y, { from = null, ortho = false, allowMid = true, surface = false } = {}) {
     const v = this.store.view;
     const { model, idx } = this.store;
     if (v.snapNodes) {
@@ -752,6 +760,27 @@ export class Viewport {
     if (v.snapLine) {
       const hit = this.pick(x, y, { lines: true });
       if (hit) return { p: hit.p.map((c) => Math.round(c * 1e6) / 1e6), kind: 'line', line: hit.id, obj: true, label: t('Auf Linie {id}', { id: hit.id }) };
+    }
+    // points on surfaces (section lines): hit point on a domain, on horizontal ones rounded to the grid
+    if (surface && this.domainMesh) {
+      this.ray(x, y);
+      const hits = this.raycaster.intersectObject(this.domainMesh, false);
+      if (hits.length) {
+        const q = hits[0].point, id = this.domainFaceIds[hits[0].faceIndex];
+        let p = [q.x, q.y, q.z];
+        const d = idx.domains.get(id);
+        const zs = d ? d.nodes.map((n) => idx.nodes.get(n)?.z ?? 0) : [];
+        if (v.grid.snap && zs.length && Math.max(...zs) - Math.min(...zs) < 1e-6) {
+          const stp = v.grid.step || 1;
+          p = [Math.round(p[0] / stp) * stp, Math.round(p[1] / stp) * stp, zs[0]];
+        }
+        if ((ortho || v.ortho) && from) {
+          const dd = V.sub(p, from);
+          const k = [0, 1, 2].reduce((a, b) => (Math.abs(dd[b]) > Math.abs(dd[a]) ? b : a), 0);
+          const pp = [...from]; pp[k] += dd[k]; p = pp;
+        }
+        return { p: p.map((c) => Math.round(c * 1e6) / 1e6), kind: 'surface', domain: id, obj: true, label: t('Auf Fläche {id}', { id }) };
+      }
     }
     let p = this.workplanePoint(x, y);
     if (!p) return null;
@@ -793,9 +822,17 @@ export class Viewport {
   }
 
   /* ---------------- camera views ---------------- */
+  // bounds of the visible part of the model (hidden objects and the part filter excluded)
+  visibleBounds() {
+    const m = this.store.model, h = this.store.view.hidden;
+    if (!h.nodes.size) return modelBounds(m);
+    const nodes = m.nodes.filter((n) => !h.nodes.has(n.id));
+    return nodes.length ? modelBounds({ nodes }) : modelBounds(m);
+  }
+
   setView(name) {
-    const b = modelBounds(this.store.model);
-    this.bounds = b;
+    this.bounds = modelBounds(this.store.model);
+    const b = this.visibleBounds();
     const dirs = {
       iso: [1, -1.25, 0.95], iso2: [-1, -1.25, 0.95], top: [0, -1e-4, 1], bottom: [0, 1e-4, -1],
       front: [0, -1, 0], back: [0, 1, 0], left: [-1, 0, 0], right: [1, 0, 0],
@@ -837,8 +874,8 @@ export class Viewport {
   }
 
   zoomExtents(keepDir = true) {
-    const b = modelBounds(this.store.model);
-    this.bounds = b;
+    this.bounds = modelBounds(this.store.model);
+    const b = this.visibleBounds();
     const target = new THREE.Vector3(...b.center);
     let dir = this.camera.position.clone().sub(this.controls.target);
     if (!keepDir || dir.lengthSq() < 1e-12) dir = new THREE.Vector3(1, -1.25, 0.95);

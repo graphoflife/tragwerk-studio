@@ -16,7 +16,7 @@ const AXIS_CLASS = { X: 'x', Y: 'y', Z: 'z' };
 const TYPED_CHARS = /^[0-9.,\-+@#<*/()× ]$/;
 
 export class PointInput {
-  constructor(tools, { prompt, ref = null, relative, onCommit, onPreview, onEnterEmpty, allowCopies = false, hints = '' }) {
+  constructor(tools, { prompt, ref = null, relative, onCommit, onPreview, onEnterEmpty, allowCopies = false, hints = '', surface = false }) {
     this.T = tools;
     this.vp = tools.vp;
     this.prompt = prompt;
@@ -27,6 +27,7 @@ export class PointInput {
     this.onEnterEmpty = onEnterEmpty;
     this.allowCopies = allowCopies;
     this.hints = hints;
+    this.surface = surface; // snap onto surfaces (section lines)
     this.constraint = null;
     this.typed = '';
     this.pickRef = false;
@@ -41,7 +42,7 @@ export class PointInput {
   resolve(e) {
     const vp = this.vp, view = this.T.store.view;
     const free = this.pickRef || !this.ref || !this.constraint;
-    const snap = vp.snap(e.x, e.y, { from: this.ref, ortho: free && e.shift && !!this.ref });
+    const snap = vp.snap(e.x, e.y, { from: this.ref, ortho: free && e.shift && !!this.ref, surface: this.surface });
     if (free) return snap ? { ...snap } : null;
     const c = this.constraint, r = this.ref;
     const step = view.grid.snap ? (view.grid.step || 1) : 0;
@@ -99,7 +100,7 @@ export class PointInput {
     const o = pl.map(0, 0, wp.offset);
     let dirHint = null;
     if (this.ref && this.mouse && !this.constraint) {
-      const raw = this.vp.snap(this.mouse.x, this.mouse.y, {});
+      const raw = this.vp.snap(this.mouse.x, this.mouse.y, { surface: this.surface });
       if (raw && V.dist(raw.p, this.ref) > 1e-9) dirHint = V.norm(V.sub(raw.p, this.ref));
     }
     return {

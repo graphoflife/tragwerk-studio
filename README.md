@@ -10,11 +10,11 @@ Läuft vollständig im Browser als statische Website (z.B. GitHub Pages) – kei
 
 | Modul | Inhalt |
 |---|---|
-| **1 Geometrie** | Knoten, Linien, Polylinien, Rechtecke, Polygone, Kreisbögen; Arbeitsebenen XY/XZ/YZ mit Raster; Fangen (Knoten, Mitten, Raster, orthogonal); Koordinateneingabe `x y z` / `@dx dy dz`; Verschieben/Kopieren (mehrfach, mit Verbindungsstäben), Drehen, Spiegeln, Skalieren, Teilen, Schnittpunkte, Knoten vereinen; DXF-Import/-Export; parametrische Generatoren (3D-Rahmen, Fachwerk, Stahlhalle, Decke, Gebäude, Zylinderschale/Kuppel/Silo) |
+| **1 Geometrie** | Knoten, Linien, Polylinien, Rechtecke, Polygone, Kreisbögen; Arbeitsebenen XY/XZ/YZ mit Raster; Fangen (Knoten, Mitten, Raster, orthogonal); Koordinateneingabe `x y z` / `@dx dy dz`; Verschieben/Kopieren (mehrfach, mit Verbindungsstäben), Drehen, Spiegeln, Skalieren, Teilen, Schnittpunkte, Knoten vereinen; DXF-Import/-Export; parametrische Generatoren (3D-Rahmen, Fachwerk, Stahlhalle, Decke, Gebäude, Zylinderschale/Kuppel/Silo); **Teile und Geschosse** (siehe unten) |
 | **2 Elemente** | Material- und Querschnittsbibliothek (S235–S460, C12/15–C50/60, C16–GL32h, Aluminium; IPE, HEA, HEB, HEM, IPN, UPN, SHS, RHS, CHS, L + parametrische Querschnitte); Balken, Fachwerkstäbe (auch nur Zug/Druck), Rippen, Starrstäbe, Federn; Stabendgelenke; Platten, Schalen, Scheiben mit Öffnungen; Knoten-, Linien- und Flächenlager (Federn, Bettung, abhebend) |
 | **3 Lasten** | Lastfälle und Lastgruppen (γ/ψ), Eigengewicht, Knotenlasten, Gleich-/Trapez-/Teillasten (global, lokal, projiziert), Einzellasten und -momente, Flächenlasten, Temperatur (gleichmässig + Gradient), Stützensenkung, Schnee & Wind (vereinfacht); Kombinationen von Hand oder automatisch nach **EN 1990** bzw. **SIA 260** |
 | **4 Netz** | Automatische Vernetzung (strukturiert oder Delaunay → Vierecke), konforme Netze zwischen Wänden, Decken, Unterzügen und Stützen; Modellprüfung |
-| **5 Statik** | Lineare Statik, Superposition, Umhüllende; nichtlinear: Theorie II. Ordnung (P-Δ), Zug-/Druckstäbe, abhebende Lager. Ergebnisse: Verformung, Verschiebungen eX…eR, Stabschnittgrössen Nx/Vy/Vz/Tx/My/Mz, Flächenschnittgrössen nx…vy, Hauptwerte, Spannungen, Auflagerkräfte |
+| **5 Statik** | Lineare Statik, Superposition, Umhüllende; nichtlinear: Theorie II. Ordnung (P-Δ), Zug-/Druckstäbe, abhebende Lager. Ergebnisse: Verformung, Verschiebungen eX…eR, Stabschnittgrössen Nx/Vy/Vz/Tx/My/Mz, Flächenschnittgrössen nx…vy, Hauptwerte, Spannungen, Auflagerkräfte; **Schnittlinien** über Flächen mit Diagramm, Extremwerten, Integral und CSV-Export |
 | **6 Knicken** | Lineare Stabilitätsanalyse (Stäbe und Schalen), kritische Lastfaktoren αcr und Knickformen |
 | **7 Schwingung** | Eigenfrequenzen und -formen (animiert), Massenbeteiligung; Antwortspektrenverfahren nach **EN 1998-1** bzw. **SIA 261** (SRSS/CQC) |
 | **8 Stahlbeton** | **EN 1992-1-1 / SIA 262**: Bewehrungsparameter je Fläche (Deckung oben/unten, Ø je Richtung, Stahlsorte) mit Skizze der statischen Höhen; Flächenbemessung nach Wood-Armer mit **axb, ayb, axt, ayt** als *erforderlich / vorhanden / fehlend* (vorgegebene Grundbewehrung Ø/s, Zulagen); Bewehrungsvorschlag (z.B. Ø12/150); Querkraft vEd/vRd,c; **Durchstanzen** an Stützen und Punktlagern (Innen-/Rand-/Eckstütze automatisch); **Plattenbalken**: Rippen in der Plattenebene mit mitwirkender Breite beff und den Plattenschnittgrössen innerhalb beff; Balken mit Längs- und Bügelbewehrung, Stabvorschlag (z.B. 8 Ø25, 2 Lagen) und Querschnittsskizze; **Bemessungsprotokoll** (was wurde wie gerechnet, massgebende Kombination, Ort) |
@@ -59,7 +59,20 @@ Die obere Leiste vereint Module, Datei-Menü (mit Modellname), Befehlssuche und 
 | Bearbeiten | `Ctrl+Z`/`Ctrl+Y`, `Entf` löschen, `H` ausblenden, `Shift+H` isolieren, `Alt+H` alles zeigen |
 | Rechnen | `F5` linear, `Shift+F5` nichtlinear |
 | Ergebnisse abfragen | Mauszeiger über Stab/Fläche zeigt die Werte; **Doppelklick** in den Bemessungsmodulen öffnet die Berechnung im Detail (Stahl-/Holzstab: alle Nachweise; Betonbalken: Verläufe und Querschnitt; Platte: Wood-Armer-Momente und Bewehrung je Kombination) |
-| Sonstiges | `Ctrl+K` Befehlssuche, `Shift+T` Tabellen, `Ctrl+P` Bericht, `Alt+1…9`, `Alt+0` Module, `F1` Hilfe |
+| Sonstiges | `Shift+P` Teile, `Ctrl+K` Befehlssuche, `Shift+T` Tabellen, `Ctrl+P` Bericht, `Alt+1…9`, `Alt+0` Module, `F1` Hilfe |
+
+### Teile und Geschosse
+
+Wie in AxisVM lassen sich Modellteile gezielt ein- und ausblenden (Knopf **Teile** in der linken Leiste, `Shift+P`, oder Seitenleiste *Modell*):
+
+- **Eigene Teile:** Elemente auswählen → *Aus Auswahl*. Auswahl hinzufügen/entfernen, umbenennen, löschen. Solange ein eigener Teil aktiv ist, landen neu gezeichnete Elemente automatisch darin.
+- **Geschosse:** *Erkennen* ermittelt die Höhenlagen aus horizontalen Flächen und Stützen. Ein Geschoss umfasst die Decke auf seiner Höhe und die Stützen und Wände darunter. Ein Klick setzt die Arbeitsebene auf das Geschoss.
+- **Logische Teile:** nach Material, Querschnitt und Elementtyp.
+- Angehakte Teile werden angezeigt (Vereinigung), nichts angehakt = alles sichtbar. Der Filter gilt auch für **Ergebnisse**: Farbskala, Extremwerte und Diagramme beziehen sich nur auf die sichtbaren Teile. *Alle zeigen* (`Alt+H`) bzw. das ✕ beim Statusleisten-Hinweis „Teile: n“ hebt den Filter auf; der Zoom *Alles zeigen* (`Pos1`/`Z`) passt auf die sichtbaren Teile ein.
+
+### Schnittlinien
+
+Werkzeug **Schnittlinie** (Module Statik und Stahlbeton): zwei Punkte auf einer Fläche klicken (Punkte rasten auf der Fläche ein). Das Diagramm zeigt die aktuelle Flächenkomponente (z.B. mx, nx, eZ, vR, axb, vEd/vRd,c) entlang der Linie, auch über mehrere Flächen; Öffnungen bleiben als Lücke. In der Seitenleiste lassen sich Schnittlinien ein-/ausschalten, umbenennen und löschen; das **Diagrammfenster** zeigt den Verlauf, Max/Min mit Lage, das **Integral** (z.B. Gesamtmoment eines Plattenstreifens aus mx, Gesamtbewehrung aus axt) und exportiert die Werte als CSV.
 
 ### Punkteingabe wie im CAD
 

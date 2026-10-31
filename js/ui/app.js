@@ -15,9 +15,10 @@ import { importDXF, exportDXF } from '../io/dxf.js';
 import { welcomeDialog } from './dialogs/help.js';
 import { runStatic } from './dialogs/analysis.js';
 import { DEFAULT_PSI } from './dialogs/manage.js';
-import { defaultCaseKey, getCase, caseLabel } from './results-data.js';
+import { defaultCaseKey, getCase, caseLabel, componentDef } from './results-data.js';
 import { memberDetail, rcBeamDetail, rcPointDialog, nearestCorner } from './dialogs/rc.js';
 import { checkName, POS_NAMES } from './design-text.js';
+import { renderParts } from './parts-ui.js';
 import { lineForces } from '../fem/index.js';
 
 export class App {
@@ -124,7 +125,7 @@ export class App {
     const btn = (id) => this.cmdButton(id);
     const filterBtn = h('button.icon-btn', { dataset: { popanchor: '1' }, onclick: () => this.openSelFilter(filterBtn), tip: [t('Auswahlfilter'), t('Festlegen, welche Objekttypen ausgewählt werden können')] }, ic('filter'));
     r.append(btn('toolSelect'), btn('toolOrbit'), h('div.sep-h'), filterBtn, btn('selectAll'), btn('invertSel'), h('div.sep-h'),
-      btn('hideSel'), btn('isolateSel'), btn('showAll'), h('div.sep-h'), btn('toolMeasure'), btn('delete'), h('div.sep-h'), btn('tables'), btn('panel'));
+      btn('hideSel'), btn('isolateSel'), btn('showAll'), this.partsBtn = btn('parts'), h('div.sep-h'), btn('toolMeasure'), btn('delete'), h('div.sep-h'), btn('tables'), btn('panel'));
   }
 
   buildVpToolbar() {
@@ -306,6 +307,10 @@ export class App {
     tg(t('Mitte'), 'split', v.snapMid, () => store.setView({ snapMid: !v.snapMid }), t('An Linienmitten fangen'));
     tg(t('Linie'), 'line', v.snapLine, () => store.setView({ snapLine: !v.snapLine }), t('Am nächstgelegenen Punkt auf Linien fangen'));
     tg(t('Ortho'), 'ortho', v.ortho, () => store.setView({ ortho: !v.ortho }), t('Nur achsparallel zeichnen (auch mit gedrückter Shift-Taste)'));
+    if (v.parts.on.size) {
+      el.appendChild(h('button.status-btn.parts-on', { onclick: () => this.openParts(this.partsBtn), tip: [t('Teilefilter aktiv'), t('Nur die angehakten Teile sind sichtbar – auch in den Ergebnissen. Klick: Teile bearbeiten')] },
+        ic('layers'), t('Teile: {n}', { n: v.parts.on.size }), h('span', { style: { marginLeft: '4px', opacity: 0.7 }, onclick: (e) => { e.stopPropagation(); store.setParts([]); } }, '✕')));
+    }
     tg(`${v.workplane.plane} ${fmtNum(toDisplay('len', v.workplane.offset))} ${unitLabel('len')}`, 'plane', false, () => this.setTab('geometry'), t('Aktive Arbeitsebene'), false);
     tg(store.model.settings.code === 'SIA' ? 'SIA' : 'Eurocode', store.model.settings.code === 'SIA' ? 'swiss' : 'eu', false, () => this.setTab(['rc', 'steel', 'timber'].includes(store.tab) ? store.tab : 'rc'), t('Aktive Normenfamilie'), false);
   }
@@ -478,11 +483,11 @@ export class App {
   }
 
   hideSelection() {
-    const s = store.selection, hd = store.view.hidden;
+    const s = store.selection, hd = store.view.manualHidden;
     if (!store.selCount()) return toast(t('Nichts ausgewählt.'), 'info');
     s.nodes.forEach((id) => hd.nodes.add(id)); s.lines.forEach((id) => hd.lines.add(id)); s.domains.forEach((id) => hd.domains.add(id));
     store.clearSelection();
-    store.emit('view');
+    store.setManualHidden(hd);
   }
 
   isolateSelection() {
@@ -491,17 +496,17 @@ export class App {
     const keepNodes = new Set(s.nodes);
     for (const id of s.lines) { const l = store.idx.lines.get(id); keepNodes.add(l.n1); keepNodes.add(l.n2); }
     for (const id of s.domains) store.idx.domains.get(id).nodes.forEach((n) => keepNodes.add(n));
-    store.view.hidden = {
+    store.setManualHidden({
       nodes: new Set(m.nodes.filter((n) => !keepNodes.has(n.id)).map((n) => n.id)),
       lines: new Set(m.lines.filter((l) => !s.lines.has(l.id)).map((l) => l.id)),
       domains: new Set(m.domains.filter((d) => !s.domains.has(d.id)).map((d) => d.id)),
-    };
-    store.emit('view');
+    });
   }
 
+  // shows everything again: manually hidden objects and the part filter
   showAll() {
-    store.view.hidden = { nodes: new Set(), lines: new Set(), domains: new Set() };
-    store.emit('view');
+    store.view.manualHidden = { nodes: new Set(), lines: new Set(), domains: new Set() };
+    store.setParts([]);
   }
 
   zoomSelection() {
@@ -535,6 +540,28 @@ export class App {
     openPopover({ x: r.right + 8, y: r.top }, h('div', { style: { minWidth: '200px' } },
       h('div.side-section-title', t('Auswählbar')), row('nodes', t('Knoten'), 'node'), row('lines', t('Linien / Stäbe'), 'line'), row('domains', t('Flächen'), 'domain'),
       row('supports', t('Lager'), 'supportPin'), row('loads', t('Lasten'), 'loadNode')));
+  }
+
+  // after drawing a section line: show a surface result so the diagram appears right away
+  afterSectionLine(name) {
+    const R = store.results, rv = store.resultView;
+    if (!R.static || !R.mesh?.shells.length) { toast(t('Schnittlinie {n} erstellt – nach der Berechnung zeigt sie den Ergebnisverlauf.', { n: name }), 'ok', 4000); return; }
+    if (rv.kind === 'rc' && R.rc) { if (!/^a[xy][bt]$|vRatio/.test(rv.component)) store.setResultView({ component: 'axb' }); }
+    else {
+      const surf = ['shell', 'nodal'].includes(componentDef(rv.component)?.kind);
+      this.showResults('static', rv.kind === 'static' && surf ? undefined : 'mx');
+    }
+    this.showSide('results');
+    toast(t('Schnittlinie {n} erstellt – Diagramm und Integral in der Seitenleiste.', { n: name }), 'ok', 4000);
+  }
+
+  // Teile / Geschosse popover (left icon bar); stays in sync with model changes while open
+  openParts(anchor) {
+    if (this.sideTab === 'model' && !this.mainEl.classList.contains('panel-hidden') && !anchor) { this.sideBody.querySelector('.parts-section')?.scrollIntoView({ block: 'start' }); return; }
+    const box = h('div.parts-pop');
+    renderParts(this, box, { compact: true });
+    openPopover(anchor || this.partsBtn, h('div', h('div.side-section-title', ic('layers'), t('Teile & Geschosse')), box), { width: 360 });
+    const off = store.on('model', () => { if (!box.isConnected) off(); else renderParts(this, box, { compact: true }); });
   }
 
   openDisplayOptions(anchor) {

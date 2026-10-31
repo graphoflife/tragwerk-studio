@@ -8,6 +8,7 @@ import { lineForces } from '../../fem/index.js';
 import { surfaceLayout, rcSurfaceDetail } from '../../design/concrete.js';
 import { BAR_DIAS, meshArea } from '../../design/rebar.js';
 import { runDesign } from './analysis.js';
+import { chart } from '../chart.js';
 import { designMessage, checkName, layerName, slabSuggestion, beamSuggestion, meshText, barsText, stirrupText, POS_NAMES } from '../design-text.js';
 
 const LAYERS = ['axb', 'ayb', 'axt', 'ayt'];
@@ -165,35 +166,6 @@ export function rcProvidedDialog(app) {
       toast(any ? t('Vorhandene Bewehrung gespeichert – Anzeige „Fehlend“ zeigt nötige Zulagen.') : t('Vorhandene Bewehrung entfernt.'), 'ok', 4500);
     } }],
   });
-}
-
-/* ---------------- charts ---------------- */
-// Small SVG line chart along a member. series: [{ ys, cls, dash }]; invert draws positive values downward.
-function chart({ xs, series, q, title, invert = false, width = 560, height = 118, hlines = [] }) {
-  const L = xs[xs.length - 1] || 1;
-  const vals = series.flatMap((s) => s.ys.filter(Number.isFinite)).concat(hlines.map((l) => l.v), [0]);
-  let lo = Math.min(...vals), hi = Math.max(...vals);
-  if (hi - lo < 1e-12) hi = lo + 1;
-  const pad = 26, top = 18, H = height - top - 8;
-  const X = (x) => pad + (x / L) * (width - 2 * pad);
-  const Y = (v) => (invert ? top + ((v - lo) / (hi - lo)) * H : top + ((hi - v) / (hi - lo)) * H);
-  let svg = `<svg viewBox="0 0 ${width} ${height}" class="rc-chart"><text x="4" y="12" class="ch-title">${title}</text>`;
-  svg += `<line x1="${X(0)}" x2="${X(L)}" y1="${Y(0)}" y2="${Y(0)}" class="ch-axis"/>`;
-  for (const l of hlines) svg += `<line x1="${X(0)}" x2="${X(L)}" y1="${Y(l.v)}" y2="${Y(l.v)}" class="ch-prov"/><text x="${X(L) - 2}" y="${Y(l.v) - 3}" text-anchor="end" class="ch-lbl prov">${l.label}</text>`;
-  for (const s of series) {
-    const pts = xs.map((x, i) => (Number.isFinite(s.ys[i]) ? `${X(x).toFixed(1)},${Y(s.ys[i]).toFixed(1)}` : null)).filter(Boolean);
-    if (!pts.length) continue;
-    if (s.fill) svg += `<polygon points="${X(0)},${Y(0)} ${pts.join(' ')} ${X(L)},${Y(0)}" class="ch-fill ${s.cls || ''}"/>`;
-    svg += `<polyline points="${pts.join(' ')}" class="ch-line ${s.cls || ''}" ${s.dash ? 'stroke-dasharray="5 4"' : ''}/>`;
-    // extremes (s.label: 'max' | 'min' | 'both'; values close to zero are not labelled)
-    let iMax = -1, iMin = -1;
-    s.ys.forEach((v, i) => { if (!Number.isFinite(v)) return; if (iMax < 0 || v > s.ys[iMax]) iMax = i; if (iMin < 0 || v < s.ys[iMin]) iMin = i; });
-    const which = s.label || 'both', tol = 0.05 * Math.max(Math.abs(hi), Math.abs(lo));
-    const idx = [which !== 'min' && iMax >= 0 && s.ys[iMax] > tol ? iMax : -1, which !== 'max' && iMin >= 0 && s.ys[iMin] < -tol ? iMin : -1];
-    if (!s.noLabel) for (const i of new Set(idx)) if (i >= 0) svg += `<text x="${Math.min(width - 60, Math.max(40, X(xs[i])))}" y="${Y(s.ys[i]) + ((invert ? s.ys[i] > 0 : s.ys[i] < 0) ? -5 : 13)}" text-anchor="middle" class="ch-lbl">${fmt(q, s.ys[i])}</text>`; // inside the filled area
-  }
-  svg += `<text x="${X(0)}" y="${height - 1}" class="ch-x">0</text><text x="${X(L)}" y="${height - 1}" text-anchor="end" class="ch-x">${fmt('len', L)}</text></svg>`;
-  return h('div', { html: svg });
 }
 
 /* ---------------- cross-section sketch ---------------- */

@@ -3,6 +3,7 @@ import { t } from '../i18n.js';
 import { toast } from './dom.js';
 import { intersectLines, mergeNodes } from '../core/model.js';
 import { deleteSelection } from './dialogs/delete.js';
+import { newPartFromSelection, detectStoreysCmd } from './parts-ui.js';
 import { openMaterials, openSections, openLoadCases, openCombinations, autoCombinations } from './dialogs/manage.js';
 import { assignLineElement, editReleases, supportDialog, quickSupport, domainFromSelection, addHoleFromSelection, designParams } from './dialogs/assign.js';
 import { nodeLoadDialog, lineLoadDialog, surfaceLoadDialog, temperatureDialog, settlementDialog, toggleSelfWeight, snowWindDialog } from './dialogs/loads.js';
@@ -95,7 +96,10 @@ export function createCommands(app) {
     showNodes: { label: 'Knoten', desc: 'Knotenpunkte anzeigen', icon: 'node', run: toggleView('showNodes'), active: viewOn('showNodes') },
     hideSel: { label: 'Ausblenden', desc: 'Auswahl ausblenden', icon: 'eyeOff', kbd: 'H', run: () => app.hideSelection() },
     isolateSel: { label: 'Isolieren', desc: 'Nur die Auswahl anzeigen', icon: 'isolate', kbd: 'Shift+H', run: () => app.isolateSelection() },
-    showAll: { label: 'Alle zeigen', desc: 'Alle ausgeblendeten Elemente wieder anzeigen', icon: 'eye', kbd: 'Alt+H', run: () => app.showAll() },
+    showAll: { label: 'Alle zeigen', desc: 'Alle ausgeblendeten Elemente und Teile wieder anzeigen', icon: 'eye', kbd: 'Alt+H', run: () => app.showAll() },
+    parts: { label: 'Teile', desc: 'Teile und Geschosse ein-/ausblenden – gilt auch für Ergebnisse und deren Extremwerte', icon: 'layers', kbd: 'Shift+P', run: () => app.openParts(), active: () => st.view.parts.on.size > 0 },
+    partNew: { label: 'Neuer Teil', desc: 'Teil aus der aktuellen Auswahl erzeugen', icon: 'plus', run: () => newPartFromSelection(app) },
+    storeys: { label: 'Geschosse', desc: 'Geschosse aus horizontalen Flächen und Stützen erkennen – danach als Teile ein-/ausblendbar', icon: 'building', run: () => { detectStoreysCmd(app); app.openParts(); } },
 
     // ---- selection
     selectAll: { label: 'Alles auswählen', desc: 'Alle sichtbaren Objekte auswählen (inkl. Lager und Lasten des aktiven Lastfalls, je nach Auswahlfilter)', icon: 'boxsel', kbd: 'Ctrl+A', run: () => app.selectAll() },
@@ -113,6 +117,7 @@ export function createCommands(app) {
     toolRect: { label: 'Rechteck', desc: 'Rechteck aus 4 Linien zeichnen', icon: 'rect', kbd: 'R', run: tool('rect'), active: () => app.tools.id === 'rect' && !app.tools.opts.domain },
     toolPolygon: { label: 'Polygon', desc: 'Geschlossenes Polygon zeichnen', icon: 'polygon', kbd: 'P', run: tool('polygon'), active: () => app.tools.id === 'polygon' && !app.tools.opts.domain },
     toolArc: { label: 'Bogen', desc: 'Kreisbogen durch 3 Punkte (in Segmente unterteilt)', icon: 'arc', kbd: 'A', run: tool('arc', { segments: 8 }), active: isTool('arc') },
+    toolSection: { label: 'Schnittlinie', desc: 'Schnittlinie über Flächen zeichnen: Ergebnisverlauf der aktuellen Komponente entlang der Linie (z.B. mx, nx, eZ, axb), mit Diagramm und Integral', icon: 'dimension', run: tool('section'), active: isTool('section') },
     toolMeasure: { label: 'Messen', desc: 'Abstand zwischen zwei Punkten messen', icon: 'measure', kbd: 'M', run: tool('measure'), active: isTool('measure') },
     move: { label: 'Mehrfach kopieren', desc: 'Verschieben/Kopieren per Dialog: Vektor, Anzahl Kopien, Verbindungsstäbe (z.B. Stützen zwischen Geschossen)', icon: 'layers', kbd: 'Shift+M', run: () => need(['nodes', 'lines', 'domains']) && transformDialog(app, 'translate') },
     rotate: { label: 'Drehen (Dialog)', desc: 'Auswahl um eine Achse drehen oder rotierend kopieren – numerisch', icon: 'rotate', run: () => need(['nodes', 'lines', 'domains']) && transformDialog(app, 'rotate') },
@@ -235,6 +240,7 @@ export const RIBBON = {
     { title: 'Bearbeiten', items: ['toolMove', 'toolCopy', 'toolRotate', 'move', 'mirror', 'scale', 'split', 'intersect', 'merge', 'delete'] },
     { title: 'Generatoren', items: ['genFrame', 'genTruss', 'genHall', 'genSlab', 'genBuilding', 'genDome'] },
     { title: 'Arbeitsebene', items: [{ custom: 'workplane' }] },
+    { title: 'Teile', items: ['parts', 'partNew', 'storeys'] },
     { title: 'Werkzeuge', items: ['toolMeasure', 'importDxf'] },
   ],
   elements: [
@@ -256,6 +262,7 @@ export const RIBBON = {
   static: [
     { title: 'Berechnung', items: ['runLinear', 'runNonlinear'] },
     { title: 'Ergebnisse', items: ['resOff', 'resDeformed', 'resDisp', 'resBeam', 'resShell', 'resStress', 'resReactions'] },
+    { title: 'Auswertung', items: ['toolSection', 'parts'] },
     { title: 'Ausgabe', items: ['tables', 'report'] },
   ],
   vibration: [
@@ -270,7 +277,7 @@ export const RIBBON = {
     { title: 'Norm', items: ['codeEC', 'codeSIA'] },
     { title: 'Parameter', items: ['rcParams', 'materials'] },
     { title: 'Bemessung', items: ['designRC', 'designRCBeam', 'rcProvided'] },
-    { title: 'Ergebnisse', items: ['resRcReq', 'resRcProv', 'resRcMiss', 'resRcShear', 'resPunch', 'resRcBeam'] },
+    { title: 'Ergebnisse', items: ['resRcReq', 'resRcProv', 'resRcMiss', 'resRcShear', 'resPunch', 'resRcBeam', 'toolSection'] },
     { title: 'Ausgabe', items: ['rcProtocol', 'rcDetail', 'tables', 'report'] },
   ],
   steel: [
