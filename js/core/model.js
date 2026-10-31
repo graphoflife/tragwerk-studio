@@ -441,7 +441,7 @@ export function validateModel(model) {
   const add = (level, msg, ref) => issues.push({ level, msg, ref });
   if (!model.nodes.length) add('err', t('Das Modell enthält keine Knoten.'));
   const structural = model.lines.filter((l) => l.element);
-  if (!structural.length && !model.domains.length) add('err', t('Keine Stab- oder Flächenelemente definiert.'));
+  if (!structural.length && !model.domains.some((d) => d.type !== 'panel')) add('err', t('Keine Stab- oder Flächenelemente definiert.'));
   if (!model.supports.length) add('err', t('Keine Lager definiert – das System ist kinematisch.'));
   if (!model.loadCases.length) add('warn', t('Keine Lastfälle definiert.'));
   for (const l of model.lines) {
@@ -455,8 +455,9 @@ export function validateModel(model) {
     }
   }
   for (const d of model.domains) {
-    if (!idx.materials.has(d.material)) add('err', t('Fläche {id}: kein Material zugewiesen.', { id: d.id }), { domains: [d.id] });
-    if (!(d.thickness > 0)) add('err', t('Fläche {id}: ungültige Dicke.', { id: d.id }), { domains: [d.id] });
+    const panel = d.type === 'panel'; // load panels need no material or thickness
+    if (!panel && !idx.materials.has(d.material)) add('err', t('Fläche {id}: kein Material zugewiesen.', { id: d.id }), { domains: [d.id] });
+    if (!panel && !(d.thickness > 0)) add('err', t('Fläche {id}: ungültige Dicke.', { id: d.id }), { domains: [d.id] });
     const pts = d.nodes.map((n) => idx.nodes.get(n)).filter(Boolean).map(P);
     if (pts.length < 3) { add('err', t('Fläche {id}: weniger als 3 Eckpunkte.', { id: d.id }), { domains: [d.id] }); continue; }
     const ax = domainAxes(pts), c = centroid(pts);
@@ -476,7 +477,7 @@ export function validateModel(model) {
   // unconnected nodes
   const used = new Set();
   for (const l of model.lines) if (l.element) { used.add(l.n1); used.add(l.n2); }
-  for (const d of model.domains) d.nodes.forEach((n) => used.add(n));
+  for (const d of model.domains) if (d.type !== 'panel') d.nodes.forEach((n) => used.add(n));
   const loose = model.supports.filter((s) => s.type === 'node' && !used.has(s.node));
   if (loose.length) add('warn', t('{n} Lager an Knoten ohne Element.', { n: loose.length }), { nodes: loose.map((s) => s.node) });
   for (const ld of model.loads) {

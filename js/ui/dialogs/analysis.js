@@ -9,6 +9,7 @@ import { defaultCaseKey, componentDef } from '../results-data.js';
 import { checkSteelMembers } from '../../design/steel.js';
 import { designRCSurfaces, designRCBeams } from '../../design/concrete.js';
 import { checkPunching } from '../../design/punching.js';
+import { designRCColumns } from '../../design/column.js';
 import { checkTimberMembers } from '../../design/timber.js';
 
 /* ---------------- mesh ---------------- */
@@ -145,11 +146,11 @@ export async function runStatic(app, nonlinear, opts) {
     res.nonlinear = !!nonlinear;
     st.results.static = res;
     st.results.staticOpts = { nonlinear: !!nonlinear, ...(opts || {}) };
-    st.results.steel = st.results.rc = st.results.rcBeams = st.results.punching = st.results.timber = null;
+    st.results.steel = st.results.rc = st.results.rcBeams = st.results.rcCols = st.results.punching = st.results.timber = null;
     const keep = st.resultView.caseKey && res.cases[st.resultView.caseKey];
     st.resultView.caseKey = keep ? st.resultView.caseKey : defaultCaseKey(st);
     st.resultView.kind = 'static';
-    if (!st.resultView.component || ['eta', 'axb', 'ayb', 'axt', 'ayt', 'vRatio', 'punch', 'AsBot', 'AsTop', 'Asw'].includes(st.resultView.component) || !componentDef(st.resultView.component)) st.resultView.component = 'deformed';
+    if (!st.resultView.component || ['eta', 'axb', 'ayb', 'axt', 'ayt', 'vRatio', 'punch', 'AsBot', 'AsTop', 'Asw', 'colEta', 'colAs'].includes(st.resultView.component) || !componentDef(st.resultView.component)) st.resultView.component = 'deformed';
     st.emit('results');
     st.emit('resultView');
     app.setStatus(t('Statik: {n} Fälle in {ms} ms · {d} Freiheitsgrade', { n: Object.keys(res.cases).length, ms: Math.round(res.ms), d: res.stats?.dofs ?? '–' }));
@@ -391,6 +392,11 @@ export async function runDesign(app, kind, { quiet = false } = {}) {
         const pf = st.results.punching.items.filter((i) => i.eta > 1).length;
         say(t('{n} Flächen bemessen · Basis: {b}', { n: doms.length, b: basis }) + (st.results.punching.items.length ? ' · ' + t('Durchstanzen: {n} Stellen, {f} mit η > 1', { n: st.results.punching.items.length, f: pf }) : ''), pf ? 'warn' : 'ok', 5000);
       }
+    } else if (kind === 'rcCol') {
+      st.results.rcCols = designRCColumns(st.model, mesh, st.results.static, keys, opts);
+      st.setResultView({ kind: 'rc', component: ['colEta', 'colAs'].includes(st.resultView.component) ? st.resultView.component : 'colEta' });
+      const n = st.results.rcCols.length, f = st.results.rcCols.filter((c) => c.ok === false || c.eta > 1).length;
+      say(n ? t('{n} Stahlbetonstützen bemessen, {f} nicht erfüllt · Basis: {b}', { n, f, b: basis }) : t('Keine Stahlbetonstützen gefunden (Balken aus Beton, vertikal, Querschnitt Rechteck oder Kreis).'), n ? (f ? 'warn' : 'ok') : 'info', 5000);
     } else if (kind === 'rcBeam') {
       st.results.rcBeams = designRCBeams(st.model, mesh, st.results.static, keys, opts);
       st.setResultView({ kind: 'rc', component: ['AsBot', 'AsTop', 'Asw'].includes(st.resultView.component) ? st.resultView.component : 'AsBot' });

@@ -62,6 +62,7 @@
 
 import { designCode, num, pos, fmt, designContext, collectLineForces, MEMBER_TYPES } from './common.js';
 import { tBeamSetup, tBeamForces } from './tbeam.js';
+import { isColumn } from './column.js';
 
 export const FLAG_COMPRESSION_REINF = 1;
 export const FLAG_AS_MAX = 2;
@@ -451,6 +452,7 @@ export function designRCBeams(model, mesh, staticResults, caseKeys, opts = {}) {
       if (!el || !MEMBER_TYPES.has(el.type)) continue;
       const mat = ctx.materials.get(Number(el.material));
       if (!mat || mat.type !== 'concrete') continue;
+      if (isColumn(model, line)) continue; // columns: column.js (N-M interaction, second order)
       try {
         const r = designBeam(ctx, code, line, el, mat, opts);
         if (r) out.push(r);
@@ -492,6 +494,7 @@ function designBeam(ctx, code, line, el, mat, opts) {
   const d = h - rc.cover - rc.diaStirrup - rc.dia / 2;
   const d2 = rc.cover + rc.diaStirrup + rc.dia / 2;
   if (!(d > 0.5 * h)) return W('cover/bar diameters too large for the section height');
+  const eccZ = ctx.mesh.beams?.[segs[0].i]?.ecc || 0; // eccentric member (mesher offset along local z)
   const z = 0.9 * d;
   const fywd = rc.fywk / pos(opts.gammaS, 1.15);
   const Ac = bf > 0 ? bf * hf + bw * (h - hf) : bw * h;
@@ -523,7 +526,10 @@ function designBeam(ctx, code, line, el, mat, opts) {
     const slab = tb ? tBeamForces(tb, ctx, ctx.cases[key], f.x) : null;
     const aB = new Array(n), aT = new Array(n), dF = new Array(n);
     for (let j = 0; j < n; j++) {
-      const My = f.My[j] + (slab ? slab.M[j] : 0), N = f.N[j] + (slab ? slab.N[j] : 0);
+      // T-section moment about its mid-height: eccentric rib (axis at ecc below the slab mid-plane) and slab
+      // normal force act with lever arms; concentric ribs keep the slab mid-plane as reference.
+      const lever = slab && hf > 0 && eccZ ? -(f.N[j] * (h / 2 - hf / 2 + eccZ) + slab.N[j] * (h / 2 - hf / 2)) : 0;
+      const My = f.My[j] + (slab ? slab.M[j] : 0) + lever, N = f.N[j] + (slab ? slab.N[j] : 0);
       const V = Math.abs(f.Vz[j]) + (slab ? Math.abs(slab.V[j]) : 0);
       env.MyMax[j] = Math.max(env.MyMax[j], My); env.MyMin[j] = Math.min(env.MyMin[j], My);
       env.MyRibMax[j] = Math.max(env.MyRibMax[j], f.My[j]); env.MyRibMin[j] = Math.min(env.MyRibMin[j], f.My[j]);
@@ -587,6 +593,7 @@ function designBeam(ctx, code, line, el, mat, opts) {
     notes.push('no result cases – nothing designed');
     return { line: line.id, x: [], AsBot: [], AsTop: [], Asw: [], ok: true, notes, code, b: bw, h, d };
   }
+  if (eccZ) notes.push(`eccentric member: axis ${fmt(eccZ, 3)} m from the line (local z)`);
   if (tb) notes.push(`T-beam: beff = ${fmt(tb.beff, 2)} m (${tb.sides.map((sd) => fmt(sd.beffI, 2)).join(' + ')} + bw), hf = ${fmt(tb.hf, 3)} m, l0 = ${fmt(tb.l0, 2)} m – slab forces within beff added (EN 1992-1-1 5.3.2.1)`);
   // minimum / maximum reinforcement
   if (opts.minReinf !== false) {

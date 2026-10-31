@@ -34,11 +34,12 @@ function concreteTargets(st) {
 // re-run the designs that exist after parameter changes (results stay consistent with the model)
 async function refreshDesigns(app) {
   const r = app.store.results;
-  const had = { rc: !!r.rc, beams: !!r.rcBeams };
-  r.rc = r.rcBeams = r.punching = null;
+  const had = { rc: !!r.rc, beams: !!r.rcBeams, cols: !!r.rcCols };
+  r.rc = r.rcBeams = r.rcCols = r.punching = null;
   if (!r.static) return;
   if (had.rc) await runDesign(app, 'rc', { quiet: true });
   if (had.beams) await runDesign(app, 'rcBeam', { quiet: true });
+  if (had.cols) await runDesign(app, 'rcCol', { quiet: true });
 }
 
 /* ---------------- reinforcement parameters ---------------- */
@@ -71,7 +72,7 @@ export function rcParamsDialog(app) {
     diaX: d0.diaX ?? d0.dia ?? 0.012, diaY: d0.diaY ?? d0.dia ?? 0.012, fyk: d0.fyk ?? 500000,
   };
   const b0 = beams[0]?.element.design?.rc || {};
-  const bp = { cover: b0.cover ?? 0.03, dia: b0.dia ?? 0.02, diaStirrup: b0.diaStirrup ?? 0.01, fyk: b0.fyk ?? 500000, tBeam: b0.tBeam !== false, l0Factor: b0.l0Factor ?? 1 };
+  const bp = { cover: b0.cover ?? 0.03, dia: b0.dia ?? 0.02, diaStirrup: b0.diaStirrup ?? 0.01, fyk: b0.fyk ?? 500000, tBeam: b0.tBeam !== false, l0Factor: b0.l0Factor ?? 1, phiEf: b0.phiEf ?? 0 };
   if (all) body.appendChild(hintBox(t('Nichts ausgewählt – die Parameter gelten für alle Betonflächen und -balken des Modells.')));
   if (doms.length) {
     const t0 = doms[0].thickness || 0.2;
@@ -97,6 +98,9 @@ export function rcParamsDialog(app) {
       field(t('Betonstahl'), selectInput({ value: bp.fyk, options: STEELS.map(([v, l]) => ({ value: v, label: l })), onChange: (v) => { bp.fyk = +v; } }), { stack: true }),
       field(t('Ø Längsbewehrung'), selectInput({ value: bp.dia, options: diaOptions(code, bp.dia), onChange: (v) => { bp.dia = +v; } }), { stack: true }),
       field(t('Ø Bügel'), selectInput({ value: bp.diaStirrup, options: diaOptions(code, bp.diaStirrup).filter((o) => o.value <= 0.016), onChange: (v) => { bp.diaStirrup = +v; } }), { stack: true })));
+    sec.appendChild(h('div.side-section-title', { style: { marginTop: '10px' } }, ic('column'), t('Stützen')));
+    sec.appendChild(field(t('Kriechzahl φef'), numInput({ value: bp.phiEf, min: 0, max: 5, onChange: (v) => { bp.phiEf = v ?? 0; } }),
+      { help: t('Für die Krümmung schlanker Stützen (Kφ = 1 + β·φef, EN 1992-1-1 5.8.4). 0 = Kriechen vernachlässigt; typisch 1 … 2. Knicklängen: Parameter „Knicklängen“ (Ky, Kz).') }));
     sec.appendChild(h('div.side-section-title', { style: { marginTop: '10px' } }, ic('rib'), t('Plattenbalken')));
     sec.appendChild(switchInput(t('Mitwirkende Plattenbreite ansetzen (Rippe + Platte als T-Querschnitt)'), bp.tBeam, (v) => { bp.tBeam = v; }));
     sec.appendChild(field(t('Momentennullpunktabstand l0'), selectInput({ value: bp.l0Factor, options: [[1, 'l0 = 1.0·L (Einfeldträger)'], [0.85, 'l0 = 0.85·L (Endfeld)'], [0.7, 'l0 = 0.7·L (Innenfeld)'], [2, 'l0 = 2.0·L (Kragarm)']].map(([v, l]) => ({ value: v, label: t(l) })), onChange: (v) => { bp.l0Factor = +v; } }),
@@ -315,7 +319,7 @@ function meshPoint(st, k) {
 
 export function rcProtocolDialog(app) {
   const st = app.store, R = st.results, code = codeOf(st);
-  if (!R.rc && !R.rcBeams) {
+  if (!R.rc && !R.rcBeams && !R.rcCols) {
     return runDesign(app, 'rc').then((ok) => ok && rcProtocolDialog(app));
   }
   const norm = code === 'SIA' ? 'SIA 262' : 'EN 1992-1-1';
@@ -413,7 +417,28 @@ export function rcProtocolDialog(app) {
     card.appendChild(h('div.tbl-wrap', tbl));
     body.appendChild(card);
   }
-  const warns = [...(R.rc?.warnings || []), ...(R.rcBeams?.warnings || []), ...(R.punching?.warnings || [])].filter((w) => !/vEd > vRd,c/.test(w));
+  // columns
+  const Cs = R.rcCols || [];
+  if (Cs.length) {
+    const card = h('div.side-section', h('div.side-section-title', ic('column'), t('Stützen'), h('span.muted.small', ` · ${code === 'SIA' ? t('Modellstütze, Nennkrümmung (Näherung zu SIA 262 4.3.7)') : 'EN 1992-1-1 5.8.8 / 5.8.9'}`)));
+    const tbl = h('table.tbl', h('thead', h('tr', ...[t('Stab'), t('Querschnitt'), 'λy / λz', 'NEd', 'MEd,y / MEd,z', t('As erf.'), t('Vorschlag'), 'η', ''].map((x) => h('th', x)))));
+    const tb = h('tbody');
+    for (const c of Cs) {
+      const g = c.governing || {};
+      tb.appendChild(h('tr',
+        h('td', c.line), h('td.small', c.shape === 'CIRC' ? `Ø${Math.round(c.D * 1000)}` : `${Math.round(c.b * 1000)}×${Math.round(c.h * 1000)}`),
+        h('td.mono', `${Math.round(c.lambda?.y || 0)}${c.slender?.y ? '*' : ''} / ${Math.round(c.lambda?.z || 0)}${c.slender?.z ? '*' : ''}`),
+        h('td.mono', fmt('force', g.NEd ?? 0)), h('td.mono', `${fmt('moment', g.MEdy ?? 0, { unit: false })} / ${fmt('moment', g.MEdz ?? 0)}`),
+        h('td.mono', fmt('reinfBeam', c.As)), h('td.mono', c.bars ? `${c.bars.n} Ø${Math.round(c.bars.dia * 1000)}` : '–'),
+        h('td.mono', { style: { color: c.ok === false || c.eta > 1 ? 'var(--danger)' : 'var(--success)' } }, ((c.eta || 0) * 100).toFixed(0) + ' %'),
+        h('td', h('button.btn.sm', { onclick: () => { d.close(); columnDetail(app, c.line); } }, t('Details')))));
+    }
+    tbl.appendChild(tb);
+    card.appendChild(h('div.tbl-wrap', tbl));
+    card.appendChild(h('div.small.muted', t('* schlank: Momente nach Theorie II. Ordnung (Nennkrümmung) berücksichtigt. Imperfektion ei = l0/400 je Richtung einzeln.')));
+    body.appendChild(card);
+  }
+  const warns = [...(R.rc?.warnings || []), ...(R.rcBeams?.warnings || []), ...(R.rcCols?.warnings || []), ...(R.punching?.warnings || [])].filter((w) => !/vEd > vRd,c/.test(w));
   if (warns.length) body.appendChild(h('div.side-section', h('div.side-section-title', ic('alert'), t('Hinweise')), ...warns.slice(0, 12).map((w) => hintBox(designMessage(w), 'warn'))));
   const d = openDialog({
     title: t('Bemessungsprotokoll Stahlbeton'), sub: `${norm} · ${R.designBasis?.basis || ''}`, iconName: 'fileText', mod: 'lilac', size: 'xwide', body,
@@ -474,4 +499,101 @@ export function rcPointDialog(app, e, c) {
     h('div.tbl-wrap', tbl),
     h('div.small.muted', { style: { marginTop: '6px' } }, t('Fett: massgebende Kombination je Lage. Wood-Armer: mxD = mx ± |mxy| (bzw. Korrektur bei negativem Gegenmoment).')));
   openDialog({ title: t('Bemessung an einem Punkt'), sub: code === 'SIA' ? 'SIA 262' : 'EN 1992-1-1', iconName: 'concrete', mod: 'lilac', size: 'xwide', body, buttons: [{ label: t('Schliessen'), kind: 'primary' }] }).el.style.height = 'auto';
+}
+
+/* ---------------- RC columns ---------------- */
+// N-M interaction diagram: x = M (≥ 0), y = N (compression downwards), design points as dots
+function interactionSvg(curve, pts, axis, title) {
+  const W = 300, H = 260, pad = 34;
+  if (!curve?.length) return h('div');
+  const Ms = curve.map((p) => p[1]).concat(pts.map((p) => p.M)), Ns = curve.map((p) => p[0]).concat(pts.map((p) => p.N), [0]);
+  const mMax = Math.max(1e-9, ...Ms) * 1.08, nMin = Math.min(...Ns), nMax = Math.max(...Ns);
+  const X = (m) => pad + (m / mMax) * (W - pad - 10);
+  const Y = (n) => 14 + ((n - nMax) / (nMin - nMax || 1)) * (H - 40);
+  const poly = curve.map(([n, m]) => `${X(m).toFixed(1)},${Y(n).toFixed(1)}`).join(' ');
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" class="rc-sketch fixed"><text x="4" y="11" class="ch-title">${title}</text>`;
+  svg += `<line x1="${X(0)}" x2="${X(mMax)}" y1="${Y(0)}" y2="${Y(0)}" class="ch-axis"/><line x1="${X(0)}" x2="${X(0)}" y1="${Y(nMax)}" y2="${Y(nMin)}" class="ch-axis"/>`;
+  svg += `<polygon points="${X(0)},${Y(curve[0][0])} ${poly} ${X(0)},${Y(curve[curve.length - 1][0])}" class="ch-fill v"/><polyline points="${poly}" class="ch-line v"/>`;
+  for (const p of pts) svg += `<circle cx="${X(p.M)}" cy="${Y(p.N)}" r="3.5" class="${p.gov ? 'nm-gov' : 'nm-pt'}"/>`;
+  svg += `<text x="${X(mMax)}" y="${Y(0) - 4}" text-anchor="end" class="ch-x">M [kNm]</text><text x="${X(0) + 4}" y="${Y(nMin) - 2}" class="ch-x">N ${fmt('force', nMin, { unit: false })}</text>`;
+  svg += `<text x="${X(0) + 4}" y="${Y(nMax) + 10}" class="ch-x">${fmt('force', nMax, { unit: false })}</text></svg>`;
+  return h('div', { html: svg });
+}
+
+function columnSketch(r) {
+  const W = 220, H = 220, size = r.shape === 'CIRC' ? r.D : Math.max(r.b, r.h), k = (W - 50) / size;
+  const cx = W / 2, cy = H / 2;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" class="rc-sketch fixed">`;
+  const c = (r.cover + r.diaStirrup) * k;
+  const db = (r.bars?.dia || r.dia || 0.02) * k / 2;
+  const pos = [];
+  if (r.shape === 'CIRC') {
+    const R = r.D * k / 2;
+    svg += `<circle cx="${cx}" cy="${cy}" r="${R}" class="sk-concrete"/><circle cx="${cx}" cy="${cy}" r="${R - r.cover * k}" class="sk-stirrup" stroke-width="${Math.max(1.5, r.diaStirrup * k)}"/>`;
+    const n = r.bars?.n || 6, rr = R - c - db;
+    for (let i = 0; i < n; i++) pos.push([cx + rr * Math.cos((2 * Math.PI * i) / n), cy + rr * Math.sin((2 * Math.PI * i) / n)]);
+    svg += `<text x="${cx}" y="${H - 6}" text-anchor="middle" class="sk-t">D = ${fmt('dim', r.D)}</text>`;
+  } else {
+    // drawing: horizontal = local y (b), vertical = local z (h)
+    const bw = r.b * k, hh = r.h * k, x0 = cx - bw / 2, y0 = cy - hh / 2;
+    svg += `<rect x="${x0}" y="${y0}" width="${bw}" height="${hh}" class="sk-concrete"/>`;
+    svg += `<rect x="${x0 + r.cover * k}" y="${y0 + r.cover * k}" width="${bw - 2 * r.cover * k}" height="${hh - 2 * r.cover * k}" rx="3" class="sk-stirrup" stroke-width="${Math.max(1.5, r.diaStirrup * k)}"/>`;
+    // bars: corners + evenly on the faces (perimeter walk)
+    const n = r.bars?.n || 4, xa = x0 + c + db, xb = x0 + bw - c - db, ya = y0 + c + db, yb = y0 + hh - c - db;
+    const per = 2 * ((xb - xa) + (yb - ya));
+    const nb = Math.max(4, n);
+    const nx = Math.max(2, Math.round(((xb - xa) / per) * nb / 2) + 1), ny = Math.max(2, nb / 2 - nx + 2);
+    for (let i = 0; i < nx; i++) { const x = xa + ((xb - xa) * i) / (nx - 1); pos.push([x, ya], [x, yb]); }
+    for (let j = 1; j < ny - 1; j++) { const y = ya + ((yb - ya) * j) / (ny - 1); pos.push([xa, y], [xb, y]); }
+    svg += `<text x="${cx}" y="${y0 + hh + 14}" text-anchor="middle" class="sk-t">b = ${fmt('dim', r.b)} (y)</text>`;
+    svg += `<text x="${x0 + bw + 4}" y="${cy}" class="sk-t">h = ${fmt('dim', r.h)} (z)</text>`;
+  }
+  // actual layout of the design (bar coordinates y/z about the centroid; drawing: y right, z up)
+  const bars = r.section?.bars;
+  const list = bars?.length ? bars.map((bb) => [cx + bb.y * k, cy - bb.z * k]) : pos;
+  for (const [x, y] of list) svg += `<circle cx="${x}" cy="${y}" r="${Math.max(2.5, db)}" class="sk-bar-y"/>`;
+  return h('div', { html: svg + '</svg>' });
+}
+
+export function columnDetail(app, lineId) {
+  const st = app.store, code = codeOf(st);
+  const r = (st.results.rcCols || []).find((c) => c.line === lineId);
+  if (!r) {
+    if (!st.results.rcCols) return runDesign(app, 'rcCol').then((ok) => ok && columnDetail(app, lineId));
+    return toast(t('Stab {id} ist keine bemessene Stahlbetonstütze.', { id: lineId }), 'info');
+  }
+  const g = r.governing || {};
+  const pts = (axis) => (r.points || []).map((p) => ({ N: p.NEd, M: Math.abs(axis === 'y' ? p.MEdy : p.MEdz), gov: p.caseKey === g.caseKey && (!g.imp || p.imp === g.imp) }));
+  const lim = (v) => (Number.isFinite(v) ? fmtNum(v, 3) : '–');
+  const kv = (rows) => h('div.res-max', rows.map(([a, b]) => h('div.r', h('span', a), h('b', b))));
+  const ax = (k) => [
+    [`l0,${k}`, fmt('len', k === 'y' ? r.l0y : r.l0z)],
+    [`λ${k} / λlim`, `${fmtNum(r.lambda?.[k] ?? 0, 3)} / ${lim(r.lambdaLim?.[k])} → ${r.slender?.[k] ? t('schlank') : t('gedrungen')}`],
+    [`M0${k} + N·ei`, fmt('moment', (k === 'y' ? g.M0y : g.M0z) ?? 0)],
+    [`M2${k} (${t('Theorie II. Ordnung')})`, fmt('moment', (k === 'y' ? g.M2y : g.M2z) ?? 0)],
+    [`MEd,${k}`, fmt('moment', (k === 'y' ? g.MEdy : g.MEdz) ?? 0)],
+  ];
+  const left = h('div', { style: { minWidth: 0 } },
+    h('div.row', { style: { gap: '10px', flexWrap: 'wrap', alignItems: 'flex-start' } },
+      interactionSvg(r.curve?.y, pts('y'), 'y', t('N-My-Interaktion (Biegung um y)')),
+      interactionSvg(r.curve?.z, pts('z'), 'z', t('N-Mz-Interaktion (Biegung um z)'))),
+    h('div.small.muted', { style: { margin: '4px 0 10px' } }, t('Kurve: Widerstand mit der vorgeschlagenen Bewehrung; Punkte: Bemessungsschnittgrössen je Kombination (inkl. Imperfektion und Theorie II. Ordnung), gross: massgebend. Zweiachsig: (MEdz/MRdz)^a + (MEdy/MRdy)^a ≤ 1.')),
+    h('div.grid2', { style: { alignItems: 'start', gap: '14px' } }, kv(ax('y')), kv(ax('z'))));
+  const right = h('div', { style: { minWidth: 0 } }, columnSketch(r),
+    kv([
+      [t('Querschnitt'), r.shape === 'CIRC' ? `Ø ${fmt('dim', r.D)}` : `${Math.round(r.b * 1000)} × ${Math.round(r.h * 1000)} mm`],
+      ['NEd', fmt('force', g.NEd ?? 0)],
+      [t('massgebend'), caseLabel(st, g.caseKey)],
+      [t('As erforderlich'), fmt('reinfBeam', r.As)],
+      ['As,min / As,max', `${fmt('reinfBeam', r.AsMin, { unit: false })} / ${fmt('reinfBeam', r.AsMax)}`],
+      [t('Vorschlag'), r.bars ? `${r.bars.n} Ø${Math.round(r.bars.dia * 1000)} (${fmt('reinfBeam', r.bars.area)})` : '–'],
+      [t('Ausnutzung η'), `${((r.eta || 0) * 100).toFixed(0)} %`],
+    ]));
+  const named = (txt) => txt.replace(/\b(CO|LC|ENV):\w+/g, (k) => caseLabel(st, k)); // case keys → names
+  const notes = h('div', { style: { marginTop: '10px' } }, ...(r.notes || []).map((n) => hintBox(named(designMessage(n)), /exceed|not possible|too small|As,max/i.test(n) ? 'warn' : '')));
+  openDialog({
+    title: t('Stahlbetonstütze {id}', { id: r.line }), sub: (r.ok === false || r.eta > 1 ? t('nicht erfüllt') : t('erfüllt')) + ' · ' + (code === 'SIA' ? 'SIA 262' : 'EN 1992-1-1'),
+    iconName: 'column', mod: 'lilac', size: 'xwide', body: h('div', h('div.rc-detail', left, right), notes),
+    buttons: [{ label: t('Im Modell zeigen'), icon: 'target', onClick: () => { st.select({ lines: [r.line] }, 'replace'); app.zoomSelection(); } }, { label: t('Schliessen'), kind: 'primary' }],
+  }).el.style.height = 'auto';
 }

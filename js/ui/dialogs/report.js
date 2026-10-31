@@ -160,7 +160,7 @@ function buildHtml(app, on) {
     parts.push(`<p class="meta">${t('Lastsituation')}: ${esc(caseLabel(st, R.buckling.basis))}</p>`);
     parts.push(table([t('Form'), 'αcr'], R.buckling.modes.map((md, i) => [i + 1, md.lambda.toFixed(3)])));
   }
-  if (on.design && (R.steel || R.timber || R.rc || R.rcBeams)) {
+  if (on.design && (R.steel || R.timber || R.rc || R.rcBeams || R.rcCols)) {
     parts.push(H2(t('Bemessung')));
     parts.push(`<p class="meta">${t('Norm')}: ${code} · ${t('Basis')}: ${esc(designCaseKeys(st).basis)}</p>`);
     const util = (list, title) => {
@@ -184,6 +184,12 @@ function buildHtml(app, on) {
       parts.push(table([t('Knoten'), t('Lage'), 'd [mm]', `VEd [${u('force')}]`, 'η [%]', t('Ergebnis')],
         R.punching.items.map((it) => [it.node, t(POS_NAMES[it.type]), Math.round(it.d * 1000), num('force', it.VEd), (it.eta * 100).toFixed(0),
           it.fail ? t('Platte verstärken / Stütze vergrössern') : it.needsReinf ? t('Durchstanzbewehrung erforderlich') : t('ohne Bewehrung erfüllt')])));
+    }
+    if (R.rcCols?.length) {
+      parts.push(`<p><b>${t('Stahlbetonstützen')}</b></p>`);
+      parts.push(table([t('Stab'), t('Querschnitt'), 'λy / λz', `NEd [${u('force')}]`, `MEd,y / MEd,z [${u('moment')}]`, `As [${u('reinfBeam')}]`, t('Vorschlag'), 'η [%]'],
+        R.rcCols.map((c) => [c.line, c.shape === 'CIRC' ? `Ø${Math.round(c.D * 1000)}` : `${Math.round(c.b * 1000)}×${Math.round(c.h * 1000)}`, `${Math.round(c.lambda?.y || 0)} / ${Math.round(c.lambda?.z || 0)}`,
+          num('force', c.governing?.NEd ?? 0), `${num('moment', c.governing?.MEdy ?? 0)} / ${num('moment', c.governing?.MEdz ?? 0)}`, num('reinfBeam', c.As), c.bars ? `${c.bars.n} Ø${Math.round(c.bars.dia * 1000)}` : '–', ((c.eta || 0) * 100).toFixed(0)])));
     }
     if (R.rcBeams?.length) {
       parts.push(`<p><b>${t('Stahlbeton Balken')}</b></p>`);

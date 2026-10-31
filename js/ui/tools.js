@@ -2,10 +2,11 @@
 // (snaps, X/Y/Z constraints with projection, reference point, typed coordinates).
 import { t } from '../i18n.js';
 import { h, toast } from './dom.js';
-import { addNode, addLine, addDomain, V, P, defaultLineElement, transformSelection, rotatePoint, centroid } from '../core/model.js';
+import { addNode, addLine, addDomain, V, P, defaultLineElement, transformSelection, rotatePoint, centroid, domainAxes } from '../core/model.js';
 import { PLANES } from './viewport.js';
 import { fmt } from '../core/units.js';
 import { PointInput, POINT_KEYS_HINT } from './pointinput.js';
+import { surfaceLoadAtDialog } from './dialogs/loads.js';
 
 export class Tools {
   constructor(app) {
@@ -362,10 +363,59 @@ class SectionTool extends DrawBase {
   }
 }
 
+// structural domain (not a load panel) containing point p, or null
+function domainAt(model, idx, p) {
+  for (const d of model.domains) {
+    if (d.type === 'panel') continue;
+    const pts = d.nodes.map((id) => idx.nodes.get(id)).filter(Boolean).map(P);
+    if (pts.length < 3) continue;
+    const ax = domainAxes(pts);
+    if (Math.abs(V.dot(V.sub(p, pts[0]), ax.ez)) > 0.01 + 0.5 * (d.thickness || 0)) continue;
+    const to2 = (q) => { const v = V.sub(q, pts[0]); return [V.dot(v, ax.ex), V.dot(v, ax.ey)]; };
+    const poly = pts.map(to2), q = to2(p);
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, yi] = poly[i], [xj, yj] = poly[j];
+      if ((yi > q[1]) !== (yj > q[1]) && q[0] < ((xj - xi) * (q[1] - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    if (inside) return d.id;
+  }
+  return null;
+}
+
+// Line / point load at free points on a surface (AxisVM: Linienlast / Einzellast auf Fläche)
+class SurfaceLoadTool extends DrawBase {
+  get surfaceSnap() { return true; }
+  line() { return this.opts.mode === 'line'; }
+  prompt() { return this.line() ? (this.pts.length ? t('Endpunkt') : t('Startpunkt')) : t('Lastpunkt'); }
+  stepHint() {
+    if (!this.line()) return t('Punkt der Einzellast auf einer Fläche wählen');
+    return this.pts.length ? t('Endpunkt der Linienlast wählen') : t('Startpunkt der Linienlast auf einer Fläche wählen');
+  }
+  extra() {
+    const a = this.lastPoint(), c = this.cur();
+    return { segments: this.line() && a && c ? [[...a, ...c]] : [] };
+  }
+  addPoint(p) {
+    const st = this.T.store;
+    if (this.line() && !this.pts.length) { this.pts.push(p); return; }
+    const a = this.line() ? this.pts[0] : p;
+    this.pts = [];
+    const mid = this.line() ? V.lerp(a, p, 0.5) : p;
+    const domain = domainAt(st.model, st.idx, mid);
+    if (!domain) { toast(t('Der Punkt liegt auf keiner Fläche (Platte, Schale, Scheibe).'), 'warn'); return; }
+    if (this.line() && V.len(V.sub(p, a)) < 1e-6) return;
+    surfaceLoadAtDialog(this.T.app, this.line() ? { mode: 'line', domain, a, b: p } : { mode: 'point', domain, p });
+  }
+}
+
 function createPolygon(T, pts, opts, element) {
   T.store.commit(opts.domain ? t('Fläche zeichnen') : t('Polygon zeichnen'), (m) => {
     const ids = pts.map((p) => addNode(m, p));
-    if (opts.domain) {
+    if (opts.domain === 'panel') {
+      // load panel: no stiffness, distributes its surface loads onto the lines in it
+      addDomain(m, ids, { type: 'panel', material: null, thickness: 0, panel: { dist: 'two' } });
+    } else if (opts.domain) {
       const d = T.app.ensureDrawDefaults('domain', opts.domain);
       addDomain(m, ids, { type: opts.domain, material: d.material, thickness: d.thickness });
       if (element) for (let i = 0; i < ids.length; i++) addLine(m, ids[i], ids[(i + 1) % ids.length], element);
@@ -616,6 +666,6 @@ class RotateTool extends TransformBase {
 }
 
 const TOOLS = {
-  select: SelectTool, orbit: OrbitTool, node: NodeTool, line: LineTool, rect: RectTool, polygon: PolygonTool, arc: ArcTool, measure: MeasureTool, section: SectionTool,
+  select: SelectTool, orbit: OrbitTool, node: NodeTool, line: LineTool, rect: RectTool, polygon: PolygonTool, arc: ArcTool, measure: MeasureTool, section: SectionTool, surfaceLoad: SurfaceLoadTool,
   move: MoveTool, copy: CopyTool, rotate: RotateTool,
 };

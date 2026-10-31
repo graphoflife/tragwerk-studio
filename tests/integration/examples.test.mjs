@@ -8,6 +8,7 @@ import { checkSteelMembers } from '../../js/design/steel.js';
 import { checkTimberMembers } from '../../js/design/timber.js';
 import { designRCSurfaces, designRCBeams } from '../../js/design/concrete.js';
 import { checkPunching } from '../../js/design/punching.js';
+import { designRCColumns } from '../../js/design/column.js';
 
 const verbose = process.argv.includes('-v');
 for (const ex of EXAMPLES) {
@@ -60,6 +61,17 @@ for (const ex of EXAMPLES) {
       assert.ok(Math.max(...mid.env.MyMax) > 1.3 * Math.max(...mid.env.MyRibMax));
       info.tbeam = Math.max(...mid.env.MyMax).toFixed(0);
     }
+  }
+  if (['building', 'frame3d'].includes(ex.id)) {
+    // RC columns: all vertical concrete beams, designed with η ≤ 1 and As ≥ As,min
+    const cols = designRCColumns(m, mesh, res, keys);
+    assert.ok(cols.length >= 30, `${ex.id}: columns ${cols.length}`);
+    for (const c of cols) {
+      assert.ok(c.ok && c.eta <= 1 + 1e-6, `${ex.id} column ${c.line}: η = ${c.eta}`);
+      assert.ok(c.As >= c.AsMin - 1e-12 && c.bars.area >= c.As - 1e-12, `${ex.id} column ${c.line}: As`);
+    }
+    info.columns = cols.length;
+    info.colEta = Math.max(...cols.map((c) => c.eta)).toFixed(2);
   }
   if (['bridge', 'building', 'frame3d'].includes(ex.id)) {
     const md = runModal(m, mesh, { nModes: 3 });

@@ -29,7 +29,13 @@ export function describeLoad(app, l) {
     }
     case 'lineDist': return `${t('Linie')} ${l.line}:${dir} ${fmt('lineLoad', l.q1)}${l.q2 !== l.q1 ? ' … ' + fmt('lineLoad', l.q2) : ''}${(l.a || 0) > 0 || (l.b ?? 1) < 1 ? ` [${(l.a ?? 0).toFixed(2)}–${(l.b ?? 1).toFixed(2)}]` : ''}`;
     case 'linePoint': return `${t('Linie')} ${l.line}:${dir} ${l.moment ? fmt('moment', l.F) : fmt('force', l.F)} @ ${(l.pos ?? 0.5).toFixed(2)}`;
-    case 'surface': return `${t('Fläche')} ${l.domain}:${dir} ${fmt('areaLoad', l.q)}${l.projected ? ' (proj.)' : ''}`;
+    case 'surface': {
+      const v = l.dist === 'linear' ? `${fmt('areaLoad', l.q, { unit: false })} … ${fmt('areaLoad', l.q2)} (${t('linear')})`
+        : l.dist === 'hydro' ? `${fmt('areaLoad', l.q, { unit: false })}·(z0 − z), z0 = ${fmt('len', l.z0)} (${t('hydrostatisch')})` : fmt('areaLoad', l.q);
+      return `${t('Fläche')} ${l.domain}:${dir} ${v}${l.projected ? ' (proj.)' : ''}`;
+    }
+    case 'surfaceLine': return `${t('Fläche')} ${l.domain}: ${t('Linienlast')}${dir} ${fmt('lineLoad', l.q1)}${l.q2 !== l.q1 ? ' … ' + fmt('lineLoad', l.q2) : ''}`;
+    case 'surfacePoint': return `${t('Fläche')} ${l.domain}: ${t('Einzellast')}${dir} ${fmt('force', l.F)} @ (${l.p.map((c) => fmt('len', c, { unit: false })).join('; ')})`;
     case 'tempLine': return `${t('Linie')} ${l.line}: ΔT ${fmt('temp', l.dT || 0)}${l.dTz ? ', ΔTz ' + fmt('temp', l.dTz) : ''}`;
     case 'tempDomain': return `${t('Fläche')} ${l.domain}: ΔT ${fmt('temp', l.dT || 0)}${l.dTz ? ', ΔTz ' + fmt('temp', l.dTz) : ''}`;
     case 'nodeDisp': return `${t('Knoten')} ${l.node}: ${t('Verschiebung')} ${l.d.slice(0, 3).map((x) => fmt('disp', x, { unit: false })).join(' / ')} ${'mm'}`;
@@ -114,15 +120,33 @@ export function lineLoadDialog(app, point) {
 export function surfaceLoadDialog(app) {
   const st = app.store;
   ensureLC(app);
-  const s = { dir: 'Z', q: -3, projected: false, replace: false };
+  // bounding box of the selected domains (defaults for linear / hydrostatic distributions)
+  const pts = [...st.selection.domains].flatMap((id) => st.idx.domains.get(id)?.nodes || []).map((n) => st.idx.nodes.get(n)).filter(Boolean);
+  const zTop = pts.length ? Math.max(...pts.map((n) => n.z)) : 0;
+  const s = { dir: 'Z', q: -3, projected: false, replace: false, dist: 'const', q2: 0, z0: zTop, gamma: 10,
+    p1: pts.length ? [Math.min(...pts.map((n) => n.x)), Math.min(...pts.map((n) => n.y)), zTop] : [0, 0, 0],
+    p2: pts.length ? [Math.max(...pts.map((n) => n.x)), Math.min(...pts.map((n) => n.y)), zTop] : [1, 0, 0] };
   const body = h('div');
+  const xyz = (arr) => h('div.grid3', ['X', 'Y', 'Z'].map((k, i) => field(k, numInput({ value: arr[i], q: 'len', onChange: (v) => { arr[i] = v ?? 0; } }), { stack: true })));
   const render = () => {
     clear(body);
     body.appendChild(lcSelector(app));
     body.appendChild(field(t('Richtung'), segmented([{ value: 'X', label: 'X' }, { value: 'Y', label: 'Y' }, { value: 'Z', label: 'Z' }, { value: 'z', label: t('z lok. (normal)') }], s.dir, (v) => { s.dir = v; render(); }, { full: true }), { stack: true }));
-    body.appendChild(field('q', numInput({ value: s.q, q: 'areaLoad', onChange: (v) => { s.q = v || 0; } })));
+    body.appendChild(field(t('Verteilung'), segmented([{ value: 'const', label: t('konstant') }, { value: 'linear', label: t('linear') }, { value: 'hydro', label: t('hydrostatisch') }], s.dist, (v) => { s.dist = v; if (v === 'hydro') s.dir = 'z'; render(); }, { full: true }), { stack: true }));
+    if (s.dist === 'const') body.appendChild(field('q', numInput({ value: s.q, q: 'areaLoad', onChange: (v) => { s.q = v || 0; } })));
+    if (s.dist === 'linear') {
+      body.appendChild(h('div.grid2', field(t('q bei Punkt 1'), numInput({ value: s.q, q: 'areaLoad', onChange: (v) => { s.q = v || 0; } }), { stack: true }),
+        field(t('q bei Punkt 2'), numInput({ value: s.q2, q: 'areaLoad', onChange: (v) => { s.q2 = v || 0; } }), { stack: true })));
+      body.appendChild(h('div.small.muted', t('Punkt 1')), xyz(s.p1), h('div.small.muted', t('Punkt 2')), xyz(s.p2));
+      body.appendChild(hintBox(t('q ändert sich linear in Richtung Punkt 1 → Punkt 2 und ist davor/dahinter konstant (z.B. Erddruck-Verlauf, Schneeverwehung).')));
+    }
+    if (s.dist === 'hydro') {
+      body.appendChild(h('div.grid2', field(t('γ (Zunahme je m Tiefe)'), numInput({ value: s.gamma, q: 'areaLoad', onChange: (v) => { s.gamma = v || 0; } }), { stack: true, help: t('Wasser 10 kN/m³, Erddruck z.B. K0·γ') }),
+        field(t('Niveau z0 (q = 0)'), numInput({ value: s.z0, q: 'len', onChange: (v) => { s.z0 = v ?? 0; } }), { stack: true })));
+      body.appendChild(hintBox(t('q = γ·(z0 − z) unterhalb von z0, darüber 0 – z.B. Wasserdruck auf Wände (Richtung z lok.). Vorzeichen von γ = Richtung.')));
+    }
     if (s.dir !== 'z') body.appendChild(checkInput(t('Auf Grundrissprojektion bezogen'), s.projected, (v) => { s.projected = v; }));
-    body.appendChild(hintBox(t('Typische Werte: Nutzlast Wohnen 2.0 kN/m², Büro 3.0 kN/m², Belag 1.5 kN/m². −Z = nach unten.')));
+    if (s.dist === 'const') body.appendChild(hintBox(t('Typische Werte: Nutzlast Wohnen 2.0 kN/m², Büro 3.0 kN/m², Belag 1.5 kN/m². −Z = nach unten.')));
     body.appendChild(replaceSwitch(s));
   };
   render();
@@ -131,7 +155,12 @@ export function surfaceLoadDialog(app) {
     buttons: [{ label: t('Abbrechen'), kind: 'ghost' }, { label: t('Hinzufügen'), kind: 'primary', icon: 'plus', onClick: () => {
       st.commit(t('Flächenlast'), (m) => {
         if (s.replace) m.loads = m.loads.filter((l) => !(l.lc === st.activeLC && l.type === 'surface' && st.selection.domains.has(l.domain)));
-        for (const did of st.selection.domains) m.loads.push({ id: nextId(m.loads), lc: st.activeLC, type: 'surface', domain: did, dir: s.dir, q: s.q, projected: s.projected && s.dir !== 'z' });
+        for (const did of st.selection.domains) {
+          const ld = { id: nextId(m.loads), lc: st.activeLC, type: 'surface', domain: did, dir: s.dir, q: s.q, projected: s.projected && s.dir !== 'z' };
+          if (s.dist === 'linear') Object.assign(ld, { dist: 'linear', q2: s.q2, p1: [...s.p1], p2: [...s.p2] });
+          if (s.dist === 'hydro') Object.assign(ld, { dist: 'hydro', q: s.gamma, z0: s.z0 });
+          m.loads.push(ld);
+        }
       });
     } }],
   });
@@ -253,4 +282,41 @@ export function snowWindDialog(app) {
     } }],
   });
   void V;
+}
+
+/** Line or point load at freely chosen points on a surface (from the surface load tools). */
+export function surfaceLoadAtDialog(app, { mode, domain, a, b, p }) {
+  const st = app.store;
+  ensureLC(app);
+  const s = { dir: 'Z', q1: -10, q2: -10, F: -20, projected: false };
+  const body = h('div');
+  const render = () => {
+    clear(body);
+    body.appendChild(lcSelector(app));
+    body.appendChild(h('div.small.muted', { style: { marginBottom: '8px' } }, mode === 'line'
+      ? t('Fläche {d}: von ({a}) nach ({b})', { d: domain, a: a.map((c) => fmt('len', c, { unit: false })).join('; '), b: b.map((c) => fmt('len', c, { unit: false })).join('; ') })
+      : t('Fläche {d}: Punkt ({p})', { d: domain, p: p.map((c) => fmt('len', c, { unit: false })).join('; ') })));
+    body.appendChild(field(t('Richtung'), segmented([{ value: 'X', label: 'X' }, { value: 'Y', label: 'Y' }, { value: 'Z', label: 'Z' }, { value: 'z', label: t('z lok. (normal)') }], s.dir, (v) => { s.dir = v; render(); }, { full: true }), { stack: true }));
+    if (mode === 'line') {
+      body.appendChild(h('div.grid2', field('q1', numInput({ value: s.q1, q: 'lineLoad', onChange: (v) => { s.q1 = v || 0; if (s.q2 === s.q1) s.q2 = s.q1; } }), { stack: true }),
+        field('q2', numInput({ value: s.q2, q: 'lineLoad', onChange: (v) => { s.q2 = v || 0; } }), { stack: true })));
+      if (s.dir !== 'z') body.appendChild(checkInput(t('Auf Grundrissprojektion bezogen'), s.projected, (v) => { s.projected = v; }));
+      body.appendChild(hintBox(t('Linienlast frei auf der Fläche, z.B. Wandlast auf einer Decke – unabhängig von Linien und Netz.')));
+    } else {
+      body.appendChild(field('F', numInput({ value: s.F, q: 'force', onChange: (v) => { s.F = v || 0; } })));
+      body.appendChild(hintBox(t('Einzellast frei auf der Fläche, z.B. Stützenlast von oben – wird auf die umliegenden Netzknoten verteilt.')));
+    }
+  };
+  render();
+  openDialog({
+    title: mode === 'line' ? t('Linienlast auf Fläche') : t('Einzellast auf Fläche'), sub: lcName(app), iconName: mode === 'line' ? 'loadLine' : 'loadPoint', mod: 'rose', body,
+    buttons: [{ label: t('Abbrechen'), kind: 'ghost' }, { label: t('Hinzufügen'), kind: 'primary', icon: 'plus', onClick: () => {
+      st.commit(mode === 'line' ? t('Linienlast auf Fläche') : t('Einzellast auf Fläche'), (m) => {
+        const base = { id: nextId(m.loads), lc: st.activeLC, domain, dir: s.dir };
+        m.loads.push(mode === 'line'
+          ? { ...base, type: 'surfaceLine', a: [...a], b: [...b], q1: s.q1, q2: s.q2, projected: s.projected && s.dir !== 'z' }
+          : { ...base, type: 'surfacePoint', p: [...p], F: s.F });
+      });
+    } }],
+  });
 }

@@ -209,7 +209,7 @@ export function domainFromSelection(app) {
   const d = app.ensureDrawDefaults('domain');
   const s = { type: 'shell', material: d.material, thickness: d.thickness };
   const body = h('div',
-    field(t('Typ'), segmented([{ value: 'plate', label: t('Platte') }, { value: 'shell', label: t('Schale') }, { value: 'membrane', label: t('Scheibe') }], s.type, (v) => { s.type = v; }, { full: true }), { stack: true }),
+    field(t('Typ'), segmented([{ value: 'plate', label: t('Platte') }, { value: 'shell', label: t('Schale') }, { value: 'membrane', label: t('Scheibe') }, { value: 'panel', label: t('Lastfläche') }], s.type, (v) => { s.type = v; }, { full: true }), { stack: true }),
     field(t('Material'), selectInput({ value: s.material, options: st.model.materials.map((m) => ({ value: m.id, label: m.name })), onChange: (v) => { s.material = +v; } })),
     field(t('Dicke'), numInput({ value: s.thickness, q: 'thick', min: 0.001, onChange: (v) => { s.thickness = v; } })),
     hintBox(t('Umriss mit {n} Ecken erkannt.', { n: loop.length }), 'ok'));
@@ -217,7 +217,7 @@ export function domainFromSelection(app) {
     title: t('Fläche aus Auswahl'), iconName: 'domain', mod: 'sky', body,
     buttons: [{ label: t('Abbrechen'), kind: 'ghost' }, { label: t('Erzeugen'), kind: 'primary', onClick: () => {
       let id;
-      st.commit(t('Fläche erzeugen'), (m) => { id = addDomain(m, loop, s); });
+      st.commit(t('Fläche erzeugen'), (m) => { id = addDomain(m, loop, s.type === 'panel' ? { type: 'panel', material: null, thickness: 0, panel: { dist: 'two' } } : s); });
       st.select({ domains: [id] }, 'replace');
     } }],
   });

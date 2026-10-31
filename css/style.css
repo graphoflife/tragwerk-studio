@@ -867,3 +867,5 @@ details.part-group:not([open]) > summary.part-head { padding-bottom: 2px; }
 .part-row .icon-btn.sm { width: 24px; height: 24px; }
 .parts-pop { width: 340px; max-height: min(70vh, 560px); overflow: auto; }
 .status-btn.parts-on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
+.nm-pt { fill: var(--text-2); opacity: 0.75; }
+.nm-gov { fill: var(--danger); stroke: var(--surface); stroke-width: 1.5; r: 5px; }

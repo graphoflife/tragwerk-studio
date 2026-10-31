@@ -25,6 +25,22 @@ function bary(p, A, B, C, eps = 1e-6) {
 }
 
 /**
+ * Point p in the quad (corner points ps[0..3], normal ez) within distance tol of its plane:
+ * { k:[3 corner indices], w:[3 weights] } of the triangle 0-1-2 or 0-2-3 containing the projection, or null.
+ */
+export function quadHit(ps, p, tol, ez) {
+  const nz = Math.hypot(ez[0], ez[1], ez[2]) || 1;
+  const dist = dot(sub(p, ps[0]), ez) / nz;
+  if (Math.abs(dist) > tol) return null;
+  const q = [p[0] - ez[0] / nz * dist, p[1] - ez[1] / nz * dist, p[2] - ez[2] / nz * dist];
+  for (const tri of [[0, 1, 2], [0, 2, 3]]) {
+    const w = bary(q, ps[tri[0]], ps[tri[1]], ps[tri[2]]);
+    if (w) return { k: tri, w };
+  }
+  return null;
+}
+
+/**
  * @returns { L, n, pts:[{ s, p, hit:{ e, k:[3 corner indices], w:[3], ez } | null }] }
  */
 export function sampleSection(mesh, a, b, { n, step = 0.05, tol } = {}) {

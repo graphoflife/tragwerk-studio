@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { ArrowBatch, label } from './vp-util.js';
 import { V, P, lineAxes, domainAxes, centroid } from '../core/model.js';
 import { fmt } from '../core/units.js';
+import { surfaceQ } from '../fem/loads.js';
+import { t } from '../i18n.js';
 
 const DIRS = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
 
@@ -107,11 +109,17 @@ export function buildLoads(vp, group, lcId) {
   const loads = model.loads.filter((l) => l.lc === lcId);
   if (!loads.length) return;
   const maxF = Math.max(1e-9, ...loads.filter((l) => l.type === 'node').map((l) => Math.hypot(l.F[0], l.F[1], l.F[2])),
-    ...loads.filter((l) => l.type === 'linePoint' && !l.moment).map((l) => Math.abs(l.F)));
+    ...loads.filter((l) => (l.type === 'linePoint' && !l.moment) || l.type === 'surfacePoint').map((l) => Math.abs(l.F)));
   const maxM = Math.max(1e-9, ...loads.filter((l) => l.type === 'node').map((l) => Math.hypot(l.F[3], l.F[4], l.F[5])),
     ...loads.filter((l) => l.type === 'linePoint' && l.moment).map((l) => Math.abs(l.F)));
-  const maxQ = Math.max(1e-9, ...loads.filter((l) => l.type === 'lineDist').map((l) => Math.max(Math.abs(l.q1), Math.abs(l.q2))));
-  const maxS = Math.max(1e-9, ...loads.filter((l) => l.type === 'surface').map((l) => Math.abs(l.q)));
+  const maxQ = Math.max(1e-9, ...loads.filter((l) => l.type === 'lineDist' || l.type === 'surfaceLine').map((l) => Math.max(Math.abs(l.q1), Math.abs(l.q2 ?? l.q1))));
+  // largest surface load intensity (variable loads: evaluated at the domain corners)
+  const surfMax = (l) => {
+    if (!l.dist || l.dist === 'const') return Math.abs(l.q);
+    const d = idx.domains.get(l.domain);
+    return Math.max(0, ...(d?.nodes || []).map((id) => Math.abs(surfaceQ(l, P(idx.nodes.get(id))))));
+  };
+  const maxS = Math.max(1e-9, ...loads.filter((l) => l.type === 'surface').map(surfMax));
   const len = (v, max) => sz * (1.4 + 2.6 * Math.min(1, Math.abs(v) / max));
 
   const arrows = new ArrowBatch(sz * 0.55, sz * 0.2);
@@ -195,6 +203,43 @@ export function buildLoads(vp, group, lcId) {
       for (let i = 0; i < tails.length - 1; i++) { segs.push(...tails[i], ...tails[i + 1]); pk.segs.push([tails[i], tails[i + 1]]); }
       if (Math.abs(ld.q1 - ld.q2) < 1e-9) lab(fmt('lineLoad', Math.abs(ld.q1)), V.lerp(tails[0], tails[tails.length - 1], 0.5));
       else { lab(fmt('lineLoad', Math.abs(ld.q1)), tails[0]); lab(fmt('lineLoad', Math.abs(ld.q2)), tails[tails.length - 1]); }
+    } else if (ld.type === 'surfaceLine' || ld.type === 'surfacePoint') {
+      const d = idx.domains.get(ld.domain);
+      if (!d || hidden.domains.has(d.id)) continue;
+      const ax = domainAxes(d.nodes.map((id) => P(idx.nodes.get(id))));
+      const dv = loadDirection(ld.dir, ax);
+      if (ld.type === 'surfacePoint') {
+        const tail = arrow(ld.p, V.mul(dv, Math.sign(ld.F) || 1), len(ld.F, maxF));
+        lab(fmt('force', Math.abs(ld.F)), tail);
+        continue;
+      }
+      const q2 = ld.q2 ?? ld.q1;
+      const n = Math.max(2, Math.min(24, Math.round(V.dist(ld.a, ld.b) / (sz * 1.6))));
+      const tails = [];
+      for (let i = 0; i <= n; i++) {
+        const f = i / n, q = ld.q1 + (q2 - ld.q1) * f, p = V.lerp(ld.a, ld.b, f);
+        tails.push(Math.abs(q) < 1e-12 ? p : arrow(p, V.mul(dv, Math.sign(q)), len(q, maxQ)));
+      }
+      for (let i = 0; i < tails.length - 1; i++) { segs.push(...tails[i], ...tails[i + 1]); pk.segs.push([tails[i], tails[i + 1]]); }
+      segs.push(...ld.a, ...ld.b);
+      if (Math.abs(ld.q1 - q2) < 1e-9) lab(fmt('lineLoad', Math.abs(ld.q1)), V.lerp(tails[0], tails[tails.length - 1], 0.5));
+      else { lab(fmt('lineLoad', Math.abs(ld.q1)), tails[0]); lab(fmt('lineLoad', Math.abs(q2)), tails[tails.length - 1]); }
+    } else if (ld.type === 'surface' && ld.dist && ld.dist !== 'const') {
+      // variable surface load: arrows scaled with the local intensity
+      const d = idx.domains.get(ld.domain);
+      if (!d || hidden.domains.has(d.id)) continue;
+      const pts = d.nodes.map((id) => P(idx.nodes.get(id)));
+      const ax = domainAxes(pts);
+      const dir0 = loadDirection(ld.dir, ax);
+      const samples = samplePolygon(pts, (d.holes || []).map((hh) => hh.map((id) => P(idx.nodes.get(id)))), ax, sz * 2.5);
+      let qmax = 0, pmax = null;
+      for (const p of samples) {
+        const q = surfaceQ(ld, p);
+        if (Math.abs(q) < 1e-9) continue;
+        const tail = arrow(p, V.mul(dir0, Math.sign(q)), len(q, maxS));
+        if (Math.abs(q) > qmax) { qmax = Math.abs(q); pmax = tail; }
+      }
+      if (pmax) lab(`${fmt('areaLoad', qmax)} (${ld.dist === 'hydro' ? t('hydrostatisch') : t('linear')})`, pmax);
     } else if (ld.type === 'surface' || ld.type === 'tempDomain') {
       const d = idx.domains.get(ld.domain);
       if (!d || hidden.domains.has(d.id)) continue;

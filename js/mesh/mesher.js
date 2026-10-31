@@ -84,6 +84,43 @@ function evenCount(L, h) {
 function oneDivType(type) { return type === 'truss' || type === 'spring' || type === 'rigid'; }
 
 /**
+ * Eccentricity of a member (element.ecc): offset vector of the element axis from the model line, or null.
+ * number → offset along the member's local z (m); 'auto' → member below a slab with flush top faces:
+ * (h − t)/2 against the slab normal (h = section height, t = slab thickness of a coplanar slab around the line).
+ */
+export function memberOffset(model, el, pa, pb, ax) {
+  const e = el.ecc;
+  if (typeof e === 'number') return Math.abs(e) > 1e-9 ? [ax.ez[0] * e, ax.ez[1] * e, ax.ez[2] * e] : null;
+  if (e !== 'auto') return null;
+  const sec = ((model && model.sections) || []).find((x) => x.id === el.section);
+  const h = sec?.dims?.h > 0 ? sec.dims.h : (sec?.A > 0 && sec?.Iy > 0 ? Math.sqrt(12 * sec.Iy / sec.A) : 0);
+  const nodes = new Map(((model && model.nodes) || []).map((n) => [n.id, [n.x, n.y, n.z]]));
+  const mid = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2, (pa[2] + pb[2]) / 2];
+  const L = Math.hypot(pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]);
+  let t = 0, n = null;
+  for (const d of (model && model.domains) || []) {
+    if (d.type === 'panel' || d.type === 'membrane' || !(d.thickness > 0)) continue;
+    const pts = d.nodes.map((id) => nodes.get(id)).filter(Boolean);
+    if (pts.length < 3) continue;
+    const dax = domainAxes(pts);
+    if (!dax) continue;
+    const tol = 1e-3 + 1e-3 * L;
+    if (Math.abs(dot(sub(pa, pts[0]), dax.ez)) > tol || Math.abs(dot(sub(pb, pts[0]), dax.ez)) > tol) continue;
+    const to2 = (p) => { const v = sub(p, pts[0]); return [dot(v, dax.ex), dot(v, dax.ey)]; };
+    const poly = pts.map(to2), m2 = to2(mid);
+    let on = pointInPolygon2D(m2[0], m2[1], poly);
+    for (let i = 0; !on && i < poly.length; i++) {
+      const q = poly[(i + 1) % poly.length];
+      if (distPointSeg2D(m2[0], m2[1], poly[i][0], poly[i][1], q[0], q[1]) <= tol) on = true;
+    }
+    if (on && d.thickness > t) { t = d.thickness; n = dax.ez; }
+  }
+  if (!n || !(h > t)) return null;
+  const off = (h - t) / 2;
+  return [-n[0] * off, -n[1] * off, -n[2] * off];
+}
+
+/**
  * Constrained Laplacian smoothing of a 2D quad mesh (free points only). A move is accepted if the
  * worst incident element (min. sine of its corner angles) does not get worse than min(before, 0.5).
  */
@@ -203,7 +240,7 @@ export function buildMesh(model, opts = {}) {
   const defDiv = Math.max(1, Math.round(posNum(opts.beamDivisions) ?? posNum(settings.beamDivisions) ?? 4));
   const mNodes = (model && model.nodes) || [];
   const mLines = (model && model.lines) || [];
-  const mDoms = (model && model.domains) || [];
+  const mDoms = ((model && model.domains) || []).filter((d) => d.type !== 'panel'); // load panels carry no elements
 
   // ---------------------------------------------------------------- tolerances
   let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
@@ -675,6 +712,7 @@ export function buildMesh(model, opts = {}) {
 
   // ---------------------------------------------------------------- beams
   const beamsRaw = [];
+  const linkSeen = new Set();
   for (const ln of mLines) {
     const s = lineSeg.get(ln.id);
     if (!s || !ln.element) continue;
@@ -689,9 +727,26 @@ export function buildMesh(model, opts = {}) {
     const relOK = type === 'beam' || type === 'rib';
     const rel = (arr) => (relOK && Array.isArray(arr) && arr.some(Boolean) ? arr.slice(0, 6).map(Boolean) : null);
     const nSeg = chain.length - 1;
+    // eccentric member: element axis on an offset node row, coupled to the line nodes by rigid links
+    const off = ['beam', 'rib'].includes(type) ? memberOffset(model, el, pa, pb, ax) : null;
+    let axis = chain, ecc = 0;
+    if (off) {
+      ecc = dot(off, ax.ez);
+      axis = chain.map((id) => {
+        const p = reg.p(id);
+        const tw = reg.add(p[0] + off[0], p[1] + off[1], p[2] + off[2]);
+        const key = id + '-' + tw;
+        if (!linkSeen.has(key)) {
+          linkSeen.add(key);
+          const lax = lineAxes(p, reg.p(tw), 0);
+          if (lax) beamsRaw.push({ n1: id, n2: tw, line: null, type: 'rigid', material: null, section: null, beta: 0, ex: lax.ex, ey: lax.ey, ez: lax.ez, relI: null, relJ: null, t0: 0, t1: 1, nl: null, k: null, link: true });
+        }
+        return tw;
+      });
+    }
     for (let k = 0; k < nSeg; k++) {
       beamsRaw.push({
-        n1: chain[k], n2: chain[k + 1], line: ln.id, type,
+        n1: axis[k], n2: axis[k + 1], line: ln.id, type, ecc,
         material: el.material ?? null, section: el.section ?? null, beta: el.beta || 0,
         ex: ax.ex, ey: ax.ey, ez: ax.ez,
         relI: k === 0 ? rel(el.releases && el.releases.i) : null,

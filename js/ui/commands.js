@@ -47,7 +47,7 @@ export function createCommands(app) {
   const rcLayer = () => (/^a[xy][bt]$/.test(st.resultView.component) ? st.resultView.component : 'axb');
   // show an RC result; designs first when there is no result yet
   const showRc = async (patch, need = 'rc') => {
-    const have = need === 'rcBeam' ? st.results.rcBeams : st.results.rc;
+    const have = need === 'rcBeam' ? st.results.rcBeams : need === 'rcCol' ? st.results.rcCols : st.results.rc;
     if (!have) { const ok = await runDesign(app, need); if (!ok) return; }
     st.setResultView({ kind: 'rc', ...patch });
     app.showSide('results');
@@ -154,7 +154,7 @@ export function createCommands(app) {
     drawPlate: { label: 'Platte', desc: 'Rechteckige Platte (Biegung) zeichnen', icon: 'plate', run: tool('rect', { domain: 'plate' }), active: isTool('rect', 'domain', 'plate') },
     drawShell: { label: 'Schale', desc: 'Rechteckige Schale (Biegung + Membran) zeichnen', icon: 'shell', run: tool('rect', { domain: 'shell' }), active: isTool('rect', 'domain', 'shell') },
     drawMembrane: { label: 'Scheibe', desc: 'Rechteckige Scheibe (Membran, z.B. Wand) zeichnen', icon: 'membrane', run: tool('rect', { domain: 'membrane' }), active: isTool('rect', 'domain', 'membrane') },
-    drawDomainPoly: { label: 'Fläche Polygon', desc: 'Fläche mit beliebigem Umriss zeichnen', icon: 'domain', run: tool('polygon', { domain: 'shell' }), active: () => app.tools.id === 'polygon' && !!app.tools.opts.domain },
+    drawDomainPoly: { label: 'Fläche Polygon', desc: 'Fläche mit beliebigem Umriss zeichnen', icon: 'domain', run: tool('polygon', { domain: 'shell' }), active: () => app.tools.id === 'polygon' && !!app.tools.opts.domain && app.tools.opts.domain !== 'panel' },
     domainFromSel: { label: 'Aus Auswahl', desc: 'Fläche aus gewählten, geschlossenen Linien erzeugen', icon: 'domain', run: () => need(['lines'], t('Bitte geschlossene Linienkette auswählen.')) && domainFromSelection(app) },
     addHole: { label: 'Öffnung', desc: 'Gewählte geschlossene Linien als Öffnung in die gewählte Fläche einfügen', icon: 'hole', run: () => need(['domains'], t('Bitte Fläche und Öffnungslinien auswählen.')) && addHoleFromSelection(app) },
     supNode: { label: 'Knotenlager', desc: 'Lager/Federn an gewählten Knoten definieren', icon: 'supportPin', run: () => need(['nodes'], t('Bitte Knoten auswählen.')) && supportDialog(app, 'node') },
@@ -172,6 +172,9 @@ export function createCommands(app) {
     loadNode: { label: 'Knotenlast', desc: 'Kräfte und Momente an gewählten Knoten', icon: 'loadNode', run: () => need(['nodes'], t('Bitte Knoten auswählen.')) && nodeLoadDialog(app) },
     loadLine: { label: 'Linienlast', desc: 'Gleich- oder Trapezlast auf gewählte Linien/Stäbe', icon: 'loadTrap', run: () => need(['lines'], t('Bitte Linien auswählen.')) && lineLoadDialog(app, false) },
     loadPoint: { label: 'Einzellast', desc: 'Einzelkraft oder -moment auf gewählten Stäben', icon: 'loadPoint', run: () => need(['lines'], t('Bitte Stäbe auswählen.')) && lineLoadDialog(app, true) },
+    loadSurfLine: { label: 'Linienlast auf Fläche', desc: 'Linienlast frei auf einer Fläche: zwei Punkte klicken (z.B. Wandlast auf Decke)', icon: 'loadLine', run: tool('surfaceLoad', { mode: 'line' }), active: isTool('surfaceLoad', 'mode', 'line') },
+    loadSurfPoint: { label: 'Einzellast auf Fläche', desc: 'Einzellast frei auf einer Fläche: Punkt klicken (z.B. Stützenlast von oben)', icon: 'loadPoint', run: tool('surfaceLoad', { mode: 'point' }), active: isTool('surfaceLoad', 'mode', 'point') },
+    drawPanel: { label: 'Lastfläche', desc: 'Lastverteilungsfläche zeichnen: verteilt Flächenlasten ohne eigene Steifigkeit auf Balken, Rippen und Wände (z.B. Holz- und Stahldecken)', icon: 'loadSurface', run: tool('polygon', { domain: 'panel' }), active: isTool('polygon', 'domain', 'panel') },
     loadSurface: { label: 'Flächenlast', desc: 'Gleichmässige Flächenlast auf gewählte Flächen', icon: 'loadSurface', run: () => need(['domains'], t('Bitte Flächen auswählen.')) && surfaceLoadDialog(app) },
     selfWeight: { label: 'Eigengewicht', desc: 'Eigengewicht im aktiven Lastfall ein-/ausschalten', icon: 'selfWeight', run: () => toggleSelfWeight(app), active: () => !!st.idx.loadCases.get(st.activeLC)?.selfWeight },
     loadTemp: { label: 'Temperatur', desc: 'Temperaturlast (gleichmässig und Gradient)', icon: 'temperature', run: () => need(['lines', 'domains'], t('Bitte Stäbe oder Flächen auswählen.')) && temperatureDialog(app) },
@@ -204,6 +207,8 @@ export function createCommands(app) {
     // ---- design: reinforced concrete
     designRC: { label: 'Flächen bemessen', desc: 'Erforderliche Bewehrung axb, ayb, axt, ayt in Platten und Schalen (Wood-Armer, EN 1992-1-1 / SIA 262), Schubnachweis und Durchstanzen', icon: 'run', run: () => runDesign(app, 'rc') },
     designRCBeam: { label: 'Balken bemessen', desc: 'Längs- und Bügelbewehrung von Betonbalken und Rippen (Plattenbalken mit mitwirkender Plattenbreite)', icon: 'beam', run: () => runDesign(app, 'rcBeam') },
+    designRCCol: { label: 'Stützen bemessen', desc: 'Stahlbetonstützen: N-M-Interaktion (zweiachsig), Schlankheit und Theorie II. Ordnung (Modellstütze, Nennkrümmung), Bewehrungsvorschlag', icon: 'column', run: () => runDesign(app, 'rcCol') },
+    resRcCol: { label: 'Stützen', desc: 'Ausnutzung der Stahlbetonstützen mit der vorgeschlagenen Bewehrung – Doppelklick zeigt das Interaktionsdiagramm', icon: 'column', run: () => showRc({ component: 'colEta' }, 'rcCol'), active: () => isRc() && ['colEta', 'colAs'].includes(st.resultView.component) },
     rcProvided: { label: 'Vorhandene Bewehrung', desc: 'Gewählte Flächenbewehrung (Ø / Abstand je Lage) vorgeben – zeigt dann fehlende Zulagen', icon: 'grid', run: () => rcProvidedDialog(app) },
     resRcReq: { label: 'Erforderlich', desc: 'Erforderliche Bewehrung der gewählten Lage', icon: 'contour', run: () => showRc({ rcMode: 'req', component: rcLayer() }), active: () => isRc() && st.resultView.rcMode !== 'prov' && st.resultView.rcMode !== 'miss' && /^a[xy][bt]$/.test(st.resultView.component) },
     resRcProv: { label: 'Vorhanden', desc: 'Vorgegebene (gewählte) Bewehrung der Lage', icon: 'grid', run: () => showRc({ rcMode: 'prov', component: rcLayer() }), active: () => isRc() && st.resultView.rcMode === 'prov' && /^a[xy][bt]$/.test(st.resultView.component) },
@@ -252,7 +257,8 @@ export const RIBBON = {
   ],
   loads: [
     { title: 'Lastfall', items: [{ custom: 'lcSelect' }, 'loadCases', 'combinations', 'autoCombos'] },
-    { title: 'Lasten', items: ['selfWeight', 'loadNode', 'loadLine', 'loadPoint', 'loadSurface', 'loadTemp', 'loadSettle', 'snowWind'] },
+    { title: 'Lasten', items: ['selfWeight', 'loadNode', 'loadLine', 'loadPoint', 'loadSurface', 'loadSurfLine', 'loadSurfPoint', 'loadTemp', 'loadSettle', 'snowWind'] },
+    { title: 'Lastflächen', items: ['drawPanel', 'domainFromSel'] },
     { title: 'Anzeige', items: ['showLoads', 'labelsValues', 'tables'] },
   ],
   mesh: [
@@ -276,8 +282,8 @@ export const RIBBON = {
   rc: [
     { title: 'Norm', items: ['codeEC', 'codeSIA'] },
     { title: 'Parameter', items: ['rcParams', 'materials'] },
-    { title: 'Bemessung', items: ['designRC', 'designRCBeam', 'rcProvided'] },
-    { title: 'Ergebnisse', items: ['resRcReq', 'resRcProv', 'resRcMiss', 'resRcShear', 'resPunch', 'resRcBeam', 'toolSection'] },
+    { title: 'Bemessung', items: ['designRC', 'designRCBeam', 'designRCCol', 'rcProvided'] },
+    { title: 'Ergebnisse', items: ['resRcReq', 'resRcProv', 'resRcMiss', 'resRcShear', 'resPunch', 'resRcBeam', 'resRcCol', 'toolSection'] },
     { title: 'Ausgabe', items: ['rcProtocol', 'rcDetail', 'tables', 'report'] },
   ],
   steel: [

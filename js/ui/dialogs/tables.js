@@ -154,7 +154,12 @@ function defs(app) {
       rows: () => R[key].map((r) => ({ id: r.line, eta: (r.eta ?? 0) * 100, gov: r.governing ? checkName(r.governing.check) : '', case: caseLabel(st, r.governing?.caseKey), cls: r.cls ?? '', _sel: { lines: [r.line] } })) });
   };
   const code = st.model.settings.code === 'SIA' ? 'SIA' : 'EC';
-  if (R.steel || R.timber || R.rcBeams || R.rc) out.push({ group: t('Bemessung') });
+  if (R.steel || R.timber || R.rcBeams || R.rc || R.rcCols) out.push({ group: t('Bemessung') });
+  if (R.rcCols?.length) {
+    out.push({ id: 'rccol', label: t('Stahlbetonstützen'), icon: 'column',
+      cols: [{ k: 'id', l: t('Stab') }, { k: 'sec', l: t('Querschnitt'), txt: true }, { k: 'ly', l: 'λy' }, { k: 'lz', l: 'λz' }, { k: 'N', l: 'NEd', q: 'force' }, { k: 'My', l: 'MEd,y', q: 'moment' }, { k: 'Mz', l: 'MEd,z', q: 'moment' }, { k: 'As', l: t('As erf.'), q: 'reinfBeam' }, { k: 'bars', l: t('Vorschlag'), txt: true }, { k: 'eta', l: 'η', u: '%' }],
+      rows: () => R.rcCols.map((c) => ({ id: c.line, sec: c.shape === 'CIRC' ? `Ø${Math.round(c.D * 1000)}` : `${Math.round(c.b * 1000)}×${Math.round(c.h * 1000)}`, ly: c.lambda?.y, lz: c.lambda?.z, N: c.governing?.NEd, My: c.governing?.MEdy, Mz: c.governing?.MEdz, As: c.As, bars: c.bars ? `${c.bars.n} Ø${Math.round(c.bars.dia * 1000)}` : '–', eta: (c.eta || 0) * 100, _sel: { lines: [c.line] } })) });
+  }
   if (R.rc?.domains?.length) {
     out.push({ id: 'rcs', label: t('Flächenbewehrung'), icon: 'concrete',
       cols: [{ k: 'id', l: t('Fläche') }, { k: 'lay', l: t('Lage'), txt: true }, { k: 'd', l: 'd', q: 'dim' }, { k: 'min', l: 'as,min', q: 'reinf' }, { k: 'max', l: t('erf. max'), q: 'reinf' }, { k: 'sug', l: t('Vorschlag'), txt: true }, { k: 'case', l: t('massgebend'), txt: true }],

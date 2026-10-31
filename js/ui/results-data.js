@@ -51,6 +51,8 @@ export const DESIGN_COMPONENTS = {
     { key: 'AsBot', label: 'Balken As unten', q: 'reinfBeam', kind: 'rcbeam' },
     { key: 'AsTop', label: 'Balken As oben', q: 'reinfBeam', kind: 'rcbeam' },
     { key: 'Asw', label: 'Bügel asw', q: 'reinf', kind: 'rcbeam' },
+    { key: 'colEta', label: 'Stützen Ausnutzung η', q: 'percent', kind: 'rccol' },
+    { key: 'colAs', label: 'Stützen As erforderlich', q: 'reinfBeam', kind: 'rccol' },
   ],
 };
 

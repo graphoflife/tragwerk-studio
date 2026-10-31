@@ -15,13 +15,13 @@ export function colors3d() {
   const dark = isDark();
   return dark ? {
     node: 0xc9cedd, nodeSel: 0xffa560, geom: 0x7d859b, beam: 0x7ab8ff, truss: 0x6fd6ae, rib: 0xbb9cff, rigid: 0xff8aa0, spring: 0xffc56b,
-    plate: 0xf3c08f, shell: 0xb9a3f5, membrane: 0x86d8d8, domainOpacity: 0.38, sel: 0xffa560, hover: 0xffd29a,
+    plate: 0xf3c08f, shell: 0xb9a3f5, membrane: 0x86d8d8, panel: 0x9db7e0, domainOpacity: 0.38, sel: 0xffa560, hover: 0xffd29a,
     support: 0x63d3a5, load: 0xff7f9b, moment: 0xffb35c, temp: 0xff9a6b, grid: 0x2a2f3c, gridMajor: 0x363c4c,
     axisX: 0xff6b7d, axisY: 0x6be09b, axisZ: 0x6aa8ff, mesh: 0x9097ab, ghost: 0x4a5163, pos: 0x7aa7ff, neg: 0xff8fa3, react: 0x7cdcb5,
     bg: 0x14161d, text: '#e9ebf3',
   } : {
     node: 0x4b5368, nodeSel: 0xff7a2f, geom: 0x9aa1b5, beam: 0x4f93f0, truss: 0x2fb487, rib: 0x8e6cf0, rigid: 0xf06080, spring: 0xf0a030,
-    plate: 0xffc896, shell: 0xc7b3ff, membrane: 0x9be3e1, domainOpacity: 0.45, sel: 0xff7a2f, hover: 0xffb070,
+    plate: 0xffc896, shell: 0xc7b3ff, membrane: 0x9be3e1, panel: 0xa9c3ee, domainOpacity: 0.45, sel: 0xff7a2f, hover: 0xffb070,
     support: 0x2fae7d, load: 0xf0557a, moment: 0xf0902a, temp: 0xf07a40, grid: 0xdfe3ec, gridMajor: 0xc9cfdc,
     axisX: 0xe8475c, axisY: 0x2fae6a, axisZ: 0x3b7ee8, mesh: 0x7a8296, ghost: 0xc5cad6, pos: 0x5b8def, neg: 0xec6b85, react: 0x2fae7d,
     bg: 0xf4f5fa, text: '#1e2331',

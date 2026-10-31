@@ -611,6 +611,7 @@ function buildRC(vp, group, mesh) {
   const comp = DESIGN_COMPONENTS.rc.find((c) => c.key === rv.component) || DESIGN_COMPONENTS.rc[0];
   const cols = paletteColors(rv.palette);
   if (comp.kind === 'rcbeam') return buildRCBeams(vp, group, mesh, comp, cols, code);
+  if (comp.kind === 'rccol') return buildRCColumns(vp, group, mesh, comp, cols);
   if (comp.kind === 'punch') return buildPunching(vp, group, mesh);
   const rc = st.results.rc;
   if (!rc?.asCorner || !mesh.shells.length) return { title: t(comp.label), empty: true, msg: t('Keine Bemessungsergebnisse für Flächen – „Flächen bemessen“ ausführen.') };
@@ -708,6 +709,37 @@ function buildRCBeams(vp, group, mesh, comp, cols, code) {
   if (ln) group.add(ln);
   const nT = list.filter((r) => r.tBeam).length;
   return { title: t(comp.label), sub: t('Stahlbetonbalken') + (nT ? ' · ' + t('{n} Plattenbalken', { n: nT }) : ''), min: 0, max: mx || 1, palette: rv.palette, levels: rv.levels, q: comp.q, extremes: [[t('Max'), fmt(comp.q, mx)], [t('nicht erfüllt'), String(list.filter((r) => r.ok === false).length)]] };
+}
+
+function buildRCColumns(vp, group, mesh, comp, cols) {
+  const st = vp.store, rv = st.resultView;
+  const list = st.results.rcCols || [];
+  if (!list.length) return { title: t(comp.label), empty: true, msg: t('Keine Stützen bemessen – „Stützen bemessen“ ausführen.') };
+  const util = comp.key === 'colEta';
+  const pal = util ? paletteColors('utilization') : cols;
+  const hiddenL = st.view.hidden.lines;
+  let mx = 0;
+  for (const r of list) if (!hiddenL.has(r.line)) mx = Math.max(mx, util ? r.eta || 0 : r.As || 0);
+  const segs = [], colors = [];
+  let nFail = 0;
+  for (const r of list) {
+    const l = st.idx.lines.get(r.line);
+    if (!l || hiddenL.has(l.id)) continue;
+    const a = st.idx.nodes.get(l.n1), b = st.idx.nodes.get(l.n2);
+    const v = util ? r.eta || 0 : r.As || 0;
+    if (r.ok === false || r.eta > 1) nFail++;
+    const c = colorAt(pal, util ? Math.min(1, v) : (mx > 0 ? v / mx : 0), util ? 0 : rv.levels);
+    segs.push(a.x, a.y, a.z, b.x, b.y, b.z);
+    colors.push(c.r, c.g, c.b, c.r, c.g, c.b);
+    const txt = `${r.bars ? `${r.bars.n} Ø${Math.round(r.bars.dia * 1000)}` : '–'} · ${(100 * (r.eta || 0)).toFixed(0)} %`;
+    group.add(label(txt, [(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2], 'big' + (r.ok === false || r.eta > 1 ? ' neg' : '')));
+  }
+  ghostMesh(vp, group, mesh);
+  const ln = vp.lines.make(segs, 0xffffff, 7, { vertexColors: colors });
+  if (ln) group.add(ln);
+  return util
+    ? { title: t('Stützen: Ausnutzung η'), sub: t('mit vorgeschlagener Bewehrung, inkl. Theorie II. Ordnung'), min: 0, max: 1, palette: 'utilization', levels: 0, q: 'percent', extremes: [[t('max. η'), (mx * 100).toFixed(0) + ' %'], [t('nicht erfüllt'), String(nFail)]] }
+    : { title: t('Stützen: As erforderlich'), sub: t('Längsbewehrung gesamt'), min: 0, max: mx || 1, palette: rv.palette, levels: rv.levels, q: 'reinfBeam', extremes: [[t('Max'), fmt('reinfBeam', mx)]] };
 }
 
 function buildPunching(vp, group, mesh) {

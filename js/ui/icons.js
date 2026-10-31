@@ -90,6 +90,7 @@ const P = {
   // structural
   material: '<path d="M12 3 3 8l9 5 9-5z"/><path d="m3 13 9 5 9-5"/><path d="m3 18 9 5 9-5" stroke-opacity=".45"/>',
   section: '<path d="M5 4h14M5 20h14M12 4v16" stroke-width="3"/>',
+  column: '<path d="M5 3h14M5 21h14"/><rect x="8.5" y="3" width="7" height="18" rx="1"/><path d="M10.5 7v10M13.5 7v10" stroke-width="1.3"/>',
   beam: '<path d="M2 9h20v4H2z"/><path d="m5 13-2.5 4h5zM19 13l-2.5 4h5z"/>',
   truss: '<path d="M2 18h20M2 18 7 7h10l5 11M7 7l5 11 5-11"/>',
   rib: '<path d="M2 8h20" stroke-width="2.4"/><path d="M9 8v9h6V8"/>',

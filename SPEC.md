@@ -63,6 +63,9 @@ model = {
   divisions: undefined | n,   // override settings.beamDivisions
   design: { Ky:1, Kz:1, KLT:1, C1:1.0, steelCheck:true,  // buckling length factors (L_cr = K·L), optional
             rc: { cover, dia, diaStirrup, fyk, tBeam:true, l0Factor:1 } }, // RC beams; tBeam = T-beam with slab
+  ecc: undefined | number | 'auto', // eccentricity along local z (m); 'auto' = below a slab with flush top faces.
+                                    // The mesher puts the element axis on an offset node row and couples it with
+                                    // rigid elements (mesh beam field `ecc` = offset along local z).
 }
 ```
 `rib` = beam that is eccentric/attached to a domain; treat exactly like `beam`.
@@ -81,7 +84,7 @@ model = {
 {
   id, nodes: [nodeIds...],        // outer polygon, ≥3 corner nodes, planar, no repeat of first
   holes: [[nodeIds...], ...],     // optional
-  type: 'shell' | 'plate' | 'membrane',
+  type: 'shell' | 'plate' | 'membrane' | 'panel',   // panel = load panel (no stiffness, not meshed): panel: { dist: 'two'|'x'|'y' }
   material: id, thickness: 0.2,   // [m]
   meshSize: undefined | h,        // override settings.meshSize
   rc: { coverB: 0.03, coverT: 0.03, diaX: 0.012, diaY: 0.012, fyk: 500000 },  // RC design params (optional;
@@ -148,6 +151,10 @@ loads: [
          a: 0, b: 1, projected: false },  // a,b: relative positions 0..1 along line; uppercase=global, lowercase=local; projected only for global dirs
  { id, lc, type: 'linePoint', line, dir, F, pos: 0.5, moment: false },     // concentrated force (or moment if moment:true, about dir axis)
  { id, lc, type: 'surface', domain, dir: 'X'|'Y'|'Z'|'z', q, projected:false }, // uniform kN/m², z = domain local normal
+   //  optional dist: 'linear' (q at p1 → q2 at p2, constant outside) | 'hydro' (q·(z0 − z) below z0; q = kN/m² per m)
+   //  on a load panel (domain.type 'panel') the load is distributed to its lines (js/fem/panels.js)
+ { id, lc, type: 'surfaceLine', domain, a:[x,y,z], b:[x,y,z], dir, q1, q2, projected }, // line load anywhere on a surface
+ { id, lc, type: 'surfacePoint', domain, p:[x,y,z], dir, F },                           // point load anywhere on a surface
  { id, lc, type: 'tempLine', line, dT: 0, dTz: 0, dTy: 0 },  // uniform + linear gradients (T(+z face) - T(-z face))
  { id, lc, type: 'tempDomain', domain, dT: 0, dTz: 0 },       // dTz = T_top - T_bottom (top = +z side)
  { id, lc, type: 'nodeDisp', node, d: [6] },                   // prescribed support displacement (m / rad), only on supported dofs

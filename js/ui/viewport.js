@@ -7,6 +7,7 @@ import { buildSupports, buildLoads, buildAxes } from './vp-glyphs.js';
 import { buildResults } from './vp-results.js';
 import { V, P, lineAxes, domainAxes, centroid, modelBounds } from '../core/model.js';
 import { sectionOutline } from '../lib/sections.js';
+import { memberOffset } from '../mesh/mesher.js';
 import { h } from './dom.js';
 import { t } from '../i18n.js';
 
@@ -327,7 +328,7 @@ export class Viewport {
     this.domainFaceIds = [];
     if (!model.domains.length) return;
     const pos = [], col = [], faceIds = [];
-    const outline = [];
+    const outline = [], panelOutline = [];
     const c = new THREE.Color();
     for (const d of model.domains) {
       if (view.hidden.domains.has(d.id)) continue;
@@ -342,8 +343,9 @@ export class Viewport {
         for (const k of t3) { pos.push(...tri.pts[k]); col.push(c.r, c.g, c.b); }
         faceIds.push(d.id);
       }
+      const ol = d.type === 'panel' ? panelOutline : outline; // load panels: dashed outline
       for (const ring of [pts, ...holes]) {
-        for (let i = 0; i < ring.length; i++) outline.push(...ring[i], ...ring[(i + 1) % ring.length]);
+        for (let i = 0; i < ring.length; i++) ol.push(...ring[i], ...ring[(i + 1) % ring.length]);
       }
     }
     if (!pos.length) return;
@@ -362,6 +364,8 @@ export class Viewport {
     this.domainFaceIds = faceIds;
     const ol = this.lines.make(outline, ghost ? C.ghost : C.geom, 1.2, { opacity: 0.8 });
     if (ol) this.groups.domains.add(ol);
+    const pl = this.lines.make(panelOutline, ghost ? C.ghost : C.panel, 1.6, { dashed: true, dashSize: this.sz * 0.6, gapSize: this.sz * 0.4 });
+    if (pl) this.groups.domains.add(pl);
   }
 
   // "Rendered" view: extruded cross-sections and slabs with thickness
@@ -378,11 +382,14 @@ export class Viewport {
       let ol;
       try { ol = sectionOutline(sec); } catch (e) { ol = null; }
       if (!ol?.outer?.length) continue;
-      const a = P(idx.nodes.get(l.n1)), b = P(idx.nodes.get(l.n2));
-      push(el.type, extrude(ol, a, b, lineAxes(a, b, el.beta || 0)));
+      let a = P(idx.nodes.get(l.n1)), b = P(idx.nodes.get(l.n2));
+      const lax = lineAxes(a, b, el.beta || 0);
+      const off = el.ecc ? memberOffset(model, el, a, b, lax) : null; // eccentric members drawn at their axis
+      if (off) { a = V.add(a, off); b = V.add(b, off); }
+      push(el.type, extrude(ol, a, b, lax));
     }
     for (const d of model.domains) {
-      if (view.hidden.domains.has(d.id)) continue;
+      if (view.hidden.domains.has(d.id) || d.type === 'panel') continue;
       const pts = d.nodes.map((id) => P(idx.nodes.get(id)));
       const holes = (d.holes || []).map((hh) => hh.map((id) => P(idx.nodes.get(id))));
       const ax = domainAxes(pts);

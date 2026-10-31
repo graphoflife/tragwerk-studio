@@ -9,7 +9,7 @@ import { editReleases, supportDialog, designParams } from './dialogs/assign.js';
 import { nodeLoadDialog, lineLoadDialog, surfaceLoadDialog, describeLoad } from './dialogs/loads.js';
 import { runStatic, runModalDialog, runBucklingDialog, runDesign } from './dialogs/analysis.js';
 import { COMPONENTS, caseOptions, caseSummary, componentDef, UTIL_CHECKS } from './results-data.js';
-import { rcParamsDialog, rcProvidedDialog, rcProtocolDialog, rcBeamDetail, memberDetail } from './dialogs/rc.js';
+import { rcParamsDialog, rcProvidedDialog, rcProtocolDialog, rcBeamDetail, memberDetail, columnDetail } from './dialogs/rc.js';
 import { designMessage, checkName, layerName, slabSuggestion, beamSuggestion, meshText, barsText, stirrupText, POS_NAMES } from './design-text.js';
 import { PALETTE_NAMES } from './vp-util.js';
 import { pointKeys } from './pointinput.js';
@@ -194,6 +194,16 @@ function lineProps(app) {
           onChange: (v) => setAll(t('Nichtlinearität'), (e) => { e.nl = v || null; }) }), { help: t('Wirkt nur in der nichtlinearen Berechnung.') }));
       }
       if (curType !== 'truss') {
+        // eccentricity (AxisVM: Exzentrizität): none, automatic (top flush with the slab) or a value along local z
+        const eccs = els.map((e) => (e.ecc === 'auto' ? 'auto' : typeof e.ecc === 'number' && e.ecc ? 'value' : 'none'));
+        const eMode = eccs.every((x) => x === eccs[0]) ? eccs[0] : null;
+        sec.appendChild(field(t('Exzentrizität'), segmented([{ value: 'none', label: t('keine') }, { value: 'auto', label: t('bündig oben') }, { value: 'value', label: t('Wert') }], eMode,
+          (v) => setAll(t('Exzentrizität'), (e) => { if (v === 'none') delete e.ecc; else if (v === 'auto') e.ecc = 'auto'; else e.ecc = typeof e.ecc === 'number' ? e.ecc : -0.2; }), { full: true }),
+        { stack: true, help: t('„Bündig oben“: Stab unter der Platte, Oberkanten bündig – Versatz (h − t)/2. Wirkt als Plattenbalken-Verbund mit Schalen (Membransteifigkeit); die Stabachse wird über Starrstäbe an die Plattenknoten gekoppelt.') }));
+        if (eMode === 'value') {
+          const ev = els.every((e) => e.ecc === els[0].ecc) ? els[0].ecc : null;
+          sec.appendChild(field(t('Versatz lokal z'), numInput({ value: ev, q: 'dim', placeholder: t('verschieden'), onChange: (v) => v != null && setAll(t('Exzentrizität'), (e) => { e.ecc = v; }) }), { help: t('Negativ = in −z (bei horizontalen Stäben nach unten).') }));
+        }
         const div = common('divisions');
         sec.appendChild(field(t('FE-Unterteilung'), numInput({ value: div === '' ? null : div, placeholder: t('Standard ({n})', { n: st.model.settings.beamDivisions }), min: 1, max: 100,
           onChange: (v) => setAll(t('Unterteilung'), (e) => { if (v == null) delete e.divisions; else e.divisions = Math.round(v); }) })));
@@ -234,8 +244,21 @@ function domainProps(app) {
   sec.appendChild(h('div.kv', { style: { marginBottom: '10px' } }, h('span', t('Fläche')), h('span', fmtNum(area) + ' m²')));
   const common = (k) => { const v = doms.map((d) => d[k]); return v.every((x) => x === v[0]) ? v[0] : ''; };
   const setAll = (label, fn) => st.commit(label, (m) => { for (const d of m.domains) if (s.domains.has(d.id)) fn(d); });
-  sec.appendChild(field(t('Typ'), segmented([{ value: 'plate', label: t('Platte') }, { value: 'shell', label: t('Schale') }, { value: 'membrane', label: t('Scheibe') }], common('type'),
-    (v) => setAll(t('Flächentyp'), (d) => { d.type = v; }), { full: true }), { stack: true }));
+  sec.appendChild(field(t('Typ'), segmented([{ value: 'plate', label: t('Platte') }, { value: 'shell', label: t('Schale') }, { value: 'membrane', label: t('Scheibe') }, { value: 'panel', label: t('Lastfläche') }], common('type'),
+    (v) => setAll(t('Flächentyp'), (d) => {
+      d.type = v;
+      if (v === 'panel') d.panel = d.panel || { dist: 'two' };
+      else if (!d.thickness) { const dd = app.ensureDrawDefaults('domain'); d.material = d.material ?? dd.material; d.thickness = dd.thickness; }
+    }), { full: true }), { stack: true }));
+  if (doms.every((d) => d.type === 'panel')) {
+    // load panel (Lastverteilungsfläche): only the distribution, no material/thickness
+    const cur = doms.every((d) => (d.panel?.dist || 'two') === (doms[0].panel?.dist || 'two')) ? doms[0].panel?.dist || 'two' : null;
+    sec.appendChild(field(t('Lastverteilung'), segmented([{ value: 'two', label: t('zweiachsig') }, { value: 'x', label: t('einachsig x') }, { value: 'y', label: t('einachsig y') }], cur,
+      (v) => setAll(t('Lastverteilung'), (d) => { d.panel = { ...(d.panel || {}), dist: v }; }), { full: true }), { stack: true }));
+    sec.appendChild(hintBox(t('Lastfläche ohne Steifigkeit: ihre Flächenlasten werden auf die Balken, Rippen und Wandkanten in der Fläche verteilt – zweiachsig nach Einzugsflächen (45°), einachsig in lokaler x- bzw. y-Richtung (Hebelgesetz). Lokale Achsen: Darstellung → Lokale Achsen.')));
+    sec.appendChild(loadList(app, (l) => l.domain && s.domains.has(l.domain), () => surfaceLoadDialog(app)));
+    return sec;
+  }
   const mo = matOptions(st); if (common('material') === '') mo.unshift({ value: '', label: t('– verschieden –') });
   sec.appendChild(field(t('Material'), h('div.row', selectInput({ value: common('material'), options: mo, onChange: (v) => v && setAll(t('Material zuweisen'), (d) => { d.material = +v; }) }),
     h('button.icon-btn.sm', { onclick: () => openMaterials(app) }, ic('dots')))));
@@ -324,9 +347,15 @@ function loadProps(app) {
     if (l.type === 'node') ['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'].forEach((k, i) => { if (l.F[i] || i === 2) box.appendChild(num(k, i < 3 ? 'force' : 'moment', (x) => x.F[i], (x, v) => { x.F[i] = v; })); });
     if (l.type === 'lineDist') { box.appendChild(num('q1', 'lineLoad', (x) => x.q1, (x, v) => { x.q1 = v; })); box.appendChild(num('q2', 'lineLoad', (x) => x.q2, (x, v) => { x.q2 = v; })); }
     if (l.type === 'linePoint') { box.appendChild(num(l.moment ? 'M' : 'F', l.moment ? 'moment' : 'force', (x) => x.F, (x, v) => { x.F = v; })); box.appendChild(num(t('Position (0…1)'), null, (x) => x.pos, (x, v) => { x.pos = Math.min(1, Math.max(0, v)); })); }
-    if (l.type === 'surface') box.appendChild(num('q', 'areaLoad', (x) => x.q, (x, v) => { x.q = v; }));
+    if (l.type === 'surface') {
+      box.appendChild(num(l.dist === 'hydro' ? t('γ (je m Tiefe)') : l.dist === 'linear' ? 'q1' : 'q', 'areaLoad', (x) => x.q, (x, v) => { x.q = v; }));
+      if (l.dist === 'linear') box.appendChild(num('q2', 'areaLoad', (x) => x.q2, (x, v) => { x.q2 = v; }));
+      if (l.dist === 'hydro') box.appendChild(num(t('Niveau z0'), 'len', (x) => x.z0, (x, v) => { x.z0 = v; }));
+    }
+    if (l.type === 'surfaceLine') { box.appendChild(num('q1', 'lineLoad', (x) => x.q1, (x, v) => { x.q1 = v; })); box.appendChild(num('q2', 'lineLoad', (x) => x.q2, (x, v) => { x.q2 = v; })); }
+    if (l.type === 'surfacePoint') box.appendChild(num('F', 'force', (x) => x.F, (x, v) => { x.F = v; }));
     if (l.type === 'tempLine' || l.type === 'tempDomain') { box.appendChild(num('ΔT', 'temp', (x) => x.dT || 0, (x, v) => { x.dT = v; })); box.appendChild(num('ΔTz', 'temp', (x) => x.dTz || 0, (x, v) => { x.dTz = v; })); }
-    if (l.dir) box.appendChild(field(t('Richtung'), selectInput({ value: l.dir, small: true, options: (l.type === 'surface' ? ['X', 'Y', 'Z', 'z'] : ['X', 'Y', 'Z', 'x', 'y', 'z']).map((d) => ({ value: d, label: d === d.toUpperCase() ? d + ' ' + t('global') : d + ' ' + t('lokal') })), onChange: (v) => upd(l.id, (x) => { x.dir = v; }) })));
+    if (l.dir) box.appendChild(field(t('Richtung'), selectInput({ value: l.dir, small: true, options: (['surface', 'surfaceLine', 'surfacePoint'].includes(l.type) ? ['X', 'Y', 'Z', 'z'] : ['X', 'Y', 'Z', 'x', 'y', 'z']).map((d) => ({ value: d, label: d === d.toUpperCase() ? d + ' ' + t('global') : d + ' ' + t('lokal') })), onChange: (v) => upd(l.id, (x) => { x.dir = v; }) })));
     sec.appendChild(box);
   }
   if (loads.length > 12) sec.appendChild(h('div.small.muted', t('… und {n} weitere', { n: loads.length - 12 })));
@@ -434,7 +463,7 @@ function renderResults(app, el) {
   if (R.modal) fams.push({ value: 'modal', label: t('Eigenf.'), icon: 'vibration' });
   if (R.buckling) fams.push({ value: 'buckling', label: t('Knicken'), icon: 'buckling' });
   if (R.steel) fams.push({ value: 'steel', label: t('Stahl'), icon: 'steel' });
-  if (R.rc || R.rcBeams) fams.push({ value: 'rc', label: t('Beton'), icon: 'concrete' });
+  if (R.rc || R.rcBeams || R.rcCols) fams.push({ value: 'rc', label: t('Beton'), icon: 'concrete' });
   if (R.timber) fams.push({ value: 'timber', label: t('Holz'), icon: 'timber' });
   if (!fams.length) {
     el.appendChild(h('div.empty', ic('diagram'), h('div', t('Noch keine Ergebnisse'))));
@@ -667,7 +696,26 @@ function rcPanel(app, el) {
     el.appendChild(h('button.btn.block', { style: { marginBottom: '10px' }, onclick: () => runDesign(app, 'rcBeam') }, ic('beam'), t('Balken bemessen')));
   }
   if (R.rc && R.mesh?.shells.length) el.appendChild(sectionLinesBlock(app));
-  const w = [...(R.rc?.warnings || []), ...(R.rcBeams?.warnings || [])].filter((x) => !/vEd > vRd,c/.test(x)).map(designMessage);
+  // --- columns
+  const colsR = R.rcCols || [];
+  if (colsR.length) {
+    const chips = h('div.chip-row', { style: { marginBottom: '8px' } });
+    for (const [k, l] of [['colEta', t('Ausnutzung')], ['colAs', t('As erf.')]]) chips.appendChild(h('button.btn.sm' + (comp === k ? '.primary' : ''), { onclick: () => set({ component: k }) }, l));
+    const box = h('div.list');
+    for (const c of [...colsR].sort((a, b) => (b.eta || 0) - (a.eta || 0)).slice(0, 60)) {
+      const eta = c.eta || 0, col = c.ok === false || eta > 1 ? 'var(--danger)' : eta > 0.85 ? 'var(--warning)' : 'var(--success)';
+      box.appendChild(h('div.list-item' + (st.selection.lines.has(c.line) ? '.active' : ''), { onclick: (e) => { if (!e.target.closest('button')) st.select({ lines: [c.line] }, 'replace'); } },
+        h('span.small', { style: { width: '38px' } }, '#' + c.line),
+        h('div', { style: { minWidth: 0, flex: 1 } }, h('div.small', `${c.bars ? `${c.bars.n} Ø${Math.round(c.bars.dia * 1000)}` : '–'} · ${fmt('reinfBeam', c.As)}`),
+          h('div.small.muted', [c.slender?.y || c.slender?.z ? t('schlank') : t('gedrungen'), `λ ${Math.round(Math.max(c.lambda?.y || 0, c.lambda?.z || 0))}`].join(' · '))),
+        h('b.small', { style: { color: col } }, (eta * 100).toFixed(0) + '%'),
+        h('button.icon-btn.sm', { onclick: () => columnDetail(app, c.line), tip: [t('Bemessungsdetails')] }, ic('info'))));
+    }
+    el.appendChild(section(t('Stützen'), chips, box));
+  } else {
+    el.appendChild(h('button.btn.block', { style: { marginBottom: '10px' }, onclick: () => runDesign(app, 'rcCol') }, ic('column'), t('Stützen bemessen')));
+  }
+  const w = [...(R.rc?.warnings || []), ...(R.rcBeams?.warnings || []), ...(R.rcCols?.warnings || [])].filter((x) => !/vEd > vRd,c/.test(x)).map(designMessage);
   if (w.length) el.appendChild(section(t('Hinweise'), ...w.slice(0, 8).map((x) => hintBox(x, 'warn'))));
   el.appendChild(h('div.list', { style: { gap: '6px' } },
     h('button.btn.block.primary', { onclick: () => rcProtocolDialog(app) }, ic('fileText'), t('Bemessungsprotokoll')),
