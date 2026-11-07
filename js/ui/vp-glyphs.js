@@ -4,6 +4,7 @@ import { ArrowBatch, label } from './vp-util.js';
 import { V, P, lineAxes, domainAxes, centroid } from '../core/model.js';
 import { fmt } from '../core/units.js';
 import { surfaceQ } from '../fem/loads.js';
+import { planarFrame } from '../mesh/geom.js';
 import { t } from '../i18n.js';
 
 const DIRS = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
@@ -231,7 +232,7 @@ export function buildLoads(vp, group, lcId) {
       const pts = d.nodes.map((id) => P(idx.nodes.get(id)));
       const ax = domainAxes(pts);
       const dir0 = loadDirection(ld.dir, ax);
-      const samples = samplePolygon(pts, (d.holes || []).map((hh) => hh.map((id) => P(idx.nodes.get(id)))), ax, sz * 2.5);
+      const samples = samplePolygon(pts, (d.holes || []).map((hh) => hh.map((id) => P(idx.nodes.get(id)))), sz * 2.5);
       let qmax = 0, pmax = null;
       for (const p of samples) {
         const q = surfaceQ(ld, p);
@@ -258,7 +259,7 @@ export function buildLoads(vp, group, lcId) {
       }
       const dv = V.mul(loadDirection(ld.dir, ax), Math.sign(ld.q) || 1);
       const L = len(ld.q, maxS);
-      const samples = samplePolygon(pts, (d.holes || []).map((hh) => hh.map((id) => P(idx.nodes.get(id)))), ax, sz * 3);
+      const samples = samplePolygon(pts, (d.holes || []).map((hh) => hh.map((id) => P(idx.nodes.get(id)))), sz * 3);
       const tails = samples.map((p) => arrow(p, dv, L));
       // outline of the load plane
       const off = V.mul(dv, -L);
@@ -280,32 +281,19 @@ export function buildLoads(vp, group, lcId) {
   if (heads) group.add(heads);
 }
 
-// Sample points on a regular grid inside a planar polygon (local 2D), capped in count
-export function samplePolygon(pts, holes, ax, spacing) {
-  const o = pts[0];
-  const to2 = (p) => [V.dot(V.sub(p, o), ax.ex), V.dot(V.sub(p, o), ax.ey)];
-  const poly = pts.map(to2), hp = holes.map((hh) => hh.map(to2));
+// Sample points on a regular grid inside a planar polygon (capped in count)
+export function samplePolygon(pts, holes, spacing) {
+  const F = planarFrame(pts, holes);
+  if (!F) return [];
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
-  for (const [x, y] of poly) { minx = Math.min(minx, x); maxx = Math.max(maxx, x); miny = Math.min(miny, y); maxy = Math.max(maxy, y); }
+  for (const [x, y] of F.poly) { minx = Math.min(minx, x); maxx = Math.max(maxx, x); miny = Math.min(miny, y); maxy = Math.max(maxy, y); }
   let step = spacing;
   while ((maxx - minx) / step * (maxy - miny) / step > 120) step *= 1.4;
   const out = [];
   for (let x = minx + step / 2; x < maxx; x += step) {
-    for (let y = miny + step / 2; y < maxy; y += step) {
-      if (!pointInPoly([x, y], poly) || hp.some((hh) => pointInPoly([x, y], hh))) continue;
-      out.push(V.add(V.add(o, V.mul(ax.ex, x)), V.mul(ax.ey, y)));
-    }
+    for (let y = miny + step / 2; y < maxy; y += step) if (F.inside2([x, y])) out.push(F.from2([x, y]));
   }
   return out;
-}
-
-export function pointInPoly(p, poly) {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, yi] = poly[i], [xj, yj] = poly[j];
-    if ((yi > p[1]) !== (yj > p[1]) && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
 }
 
 /* ---------------- local axes ---------------- */

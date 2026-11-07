@@ -13,54 +13,10 @@
 // Integration: midpoint rule with K points per side from the rib axis to bw/2 + beff,i, slab values
 // at the nearest mesh corner (nodal-averaged values).
 import { pos } from './common.js';
+import { sub, dot, cross, normalize as norm, raySegment2D } from '../mesh/geom.js';
 
 const K = 5;
-const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const len = (a) => Math.hypot(a[0], a[1], a[2]);
-const norm = (a) => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
 const P = (n) => [n.x, n.y, n.z];
-
-function shellsByDomain(ctx) {
-  if (ctx._shellsByDomain) return ctx._shellsByDomain;
-  const map = new Map();
-  (ctx.mesh.shells || []).forEach((s, e) => {
-    if (!s) return;
-    const id = Number(s.domain);
-    if (!map.has(id)) map.set(id, []);
-    map.get(id).push(e);
-  });
-  return (ctx._shellsByDomain = map);
-}
-
-// 2D polygon loops of a domain in its plane (outer + holes)
-function domainLoops(ctx, dom, o, ex, ey) {
-  const to2 = (id) => { const n = ctx.nodes.get(id); const v = sub(P(n), o); return [dot(v, ex), dot(v, ey)]; };
-  return [dom.nodes, ...(dom.holes || [])].map((loop) => loop.map(to2));
-}
-
-function inside(loops, p) {
-  let c = false;
-  for (const poly of loops) {
-    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-      const a = poly[i], b = poly[j];
-      if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]) c = !c;
-    }
-  }
-  return c;
-}
-
-// distance along the ray o + t·d (2D) to the first crossing of segment a–b, or Infinity
-function rayHit(o, d, a, b) {
-  const e = [b[0] - a[0], b[1] - a[1]];
-  const den = d[0] * e[1] - d[1] * e[0];
-  if (Math.abs(den) < 1e-12) return Infinity;
-  const w = [a[0] - o[0], a[1] - o[1]];
-  const t = (w[0] * e[1] - w[1] * e[0]) / den;
-  const u = (w[0] * d[1] - w[1] * d[0]) / den;
-  return t > 1e-9 && u >= -1e-9 && u <= 1 + 1e-9 ? t : Infinity;
-}
 
 /**
  * Finds the slab flanges of a rib. Returns null when no concrete slab lies next to it, otherwise
@@ -74,29 +30,26 @@ export function tBeamSetup(ctx, line, segs, bw, L, opts = {}) {
   const ribEz = ctx.mesh.beams?.[segs[0]?.i]?.ez;
   if (!ribEz) return null;
   const l0 = pos(opts.l0, pos(opts.l0Factor, 1.0) * L);
-  const byDom = shellsByDomain(ctx);
   const sides = [];
   for (const dom of ctx.model.domains || []) {
-    const elems = byDom.get(Number(dom.id));
+    const elems = ctx.shellsByDomain.get(Number(dom.id));
     if (!elems?.length) continue;
     const sh = ctx.mesh.shells[elems[0]];
     const mat = ctx.materials.get(Number(sh.material ?? dom.material));
-    if (!mat || mat.type !== 'concrete' || sh.type === 'membrane' || !sh.ez) continue;
-    const ex = sh.ex, ey = sh.ey, ez = sh.ez;
-    const o = P(ctx.nodes.get(dom.nodes[0]));
-    const tol = 1e-3 + 0.01 * L;
-    if (Math.abs(dot(sub(a, o), ez)) > tol || Math.abs(dot(sub(b, o), ez)) > tol || Math.abs(dot(s, ez)) > 0.02) continue;
-    const loops = domainLoops(ctx, dom, o, ex, ey);
-    const m2 = [dot(sub(mid, o), ex), dot(sub(mid, o), ey)];
+    if (!mat || mat.type !== 'concrete' || sh.type === 'membrane') continue;
+    const F = ctx.frame(dom);
+    if (!F || Math.abs(dot(s, F.ez)) > 0.02 || !F.containsSegment(a, b)) continue; // rib in or on the edge of the slab
+    const m2 = F.to2(mid);
     const t = pos(sh.thickness, pos(dom.thickness, 0));
     for (const sgnSide of [1, -1]) {
-      const n3 = norm(cross(ez, s)).map((v) => v * sgnSide);
-      const d2 = [dot(n3, ex), dot(n3, ey)];
+      const n3 = norm(cross(F.ez, s)).map((v) => v * sgnSide);
+      const d2 = [dot(n3, F.ex), dot(n3, F.ey)];
       const eps = Math.min(0.05, 0.01 * L);
-      if (!inside(loops, [m2[0] + d2[0] * eps, m2[1] + d2[1] * eps])) continue;
+      if (!F.inside2([m2[0] + d2[0] * eps, m2[1] + d2[1] * eps])) continue; // no slab on this side
+      const hit = (q1, q2) => raySegment2D(m2, d2, q1, q2)?.s ?? Infinity;
       // distance to the slab edge …
       let dEdge = Infinity;
-      for (const poly of loops) for (let i = 0; i < poly.length; i++) dEdge = Math.min(dEdge, rayHit(m2, d2, poly[i], poly[(i + 1) % poly.length]));
+      for (const poly of F.loops) for (let i = 0; i < poly.length; i++) dEdge = Math.min(dEdge, hit(poly[i], poly[(i + 1) % poly.length]));
       // … and to the next parallel web in the slab
       let dRib = Infinity;
       for (const l of ctx.model.lines || []) {
@@ -104,14 +57,14 @@ export function tBeamSetup(ctx, line, segs, bw, L, opts = {}) {
         const p1 = ctx.nodes.get(l.n1), p2 = ctx.nodes.get(l.n2);
         if (!p1 || !p2) continue;
         const q1 = P(p1), q2 = P(p2);
-        if (Math.abs(dot(sub(q1, o), ez)) > tol || Math.abs(dot(sub(q2, o), ez)) > tol) continue;
+        if (Math.abs(F.dist(q1)) > F.tol || Math.abs(F.dist(q2)) > F.tol) continue;
         if (Math.abs(dot(norm(sub(q2, q1)), s)) < 0.9) continue;
-        dRib = Math.min(dRib, rayHit(m2, d2, [dot(sub(q1, o), ex), dot(sub(q1, o), ey)], [dot(sub(q2, o), ex), dot(sub(q2, o), ey)]));
+        dRib = Math.min(dRib, hit(F.to2(q1), F.to2(q2)));
       }
       const bi = Math.max(0, Math.min(dEdge - bw / 2, Number.isFinite(dRib) ? (dRib - bw) / 2 : Infinity));
       if (!Number.isFinite(bi) || !(bi > 0)) continue;
       const beffI = Math.min(0.2 * bi + 0.1 * l0, 0.2 * l0, bi);
-      sides.push({ domain: dom.id, elems, sgnSide, n3, b: bi, beffI, width: bw / 2 + beffI, t, sgn: dot(ez, ribEz) >= 0 ? 1 : -1 });
+      sides.push({ domain: dom.id, elems, sgnSide, n3, b: bi, beffI, width: bw / 2 + beffI, t, sgn: dot(F.ez, ribEz) >= 0 ? 1 : -1 });
     }
   }
   if (!sides.length) return null;

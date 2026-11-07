@@ -10,35 +10,7 @@
 // sectionValues(sample, cornerValue) → values per sample (cornerValue(e, k) = value at corner k of
 // shell e, null → no value). integrate(s, v) = trapezoidal rule over the defined parts.
 
-const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-
-// barycentric weights of p (projected) in triangle (A, B, C), or null if outside
-function bary(p, A, B, C, eps = 1e-6) {
-  const v0 = sub(B, A), v1 = sub(C, A), v2 = sub(p, A);
-  const d00 = dot(v0, v0), d01 = dot(v0, v1), d11 = dot(v1, v1), d20 = dot(v2, v0), d21 = dot(v2, v1);
-  const den = d00 * d11 - d01 * d01;
-  if (Math.abs(den) < 1e-18) return null;
-  const v = (d11 * d20 - d01 * d21) / den, w = (d00 * d21 - d01 * d20) / den, u = 1 - v - w;
-  return u >= -eps && v >= -eps && w >= -eps ? [u, v, w] : null;
-}
-
-/**
- * Point p in the quad (corner points ps[0..3], normal ez) within distance tol of its plane:
- * { k:[3 corner indices], w:[3 weights] } of the triangle 0-1-2 or 0-2-3 containing the projection, or null.
- */
-export function quadHit(ps, p, tol, ez) {
-  const nz = Math.hypot(ez[0], ez[1], ez[2]) || 1;
-  const dist = dot(sub(p, ps[0]), ez) / nz;
-  if (Math.abs(dist) > tol) return null;
-  const q = [p[0] - ez[0] / nz * dist, p[1] - ez[1] / nz * dist, p[2] - ez[2] / nz * dist];
-  for (const tri of [[0, 1, 2], [0, 2, 3]]) {
-    const w = bary(q, ps[tri[0]], ps[tri[1]], ps[tri[2]]);
-    if (w) return { k: tri, w };
-  }
-  return null;
-}
+import { sub, dot, cross, barycentric as bary } from '../mesh/geom.js';
 
 /**
  * @returns { L, n, pts:[{ s, p, hit:{ e, k:[3 corner indices], w:[3], ez } | null }] }

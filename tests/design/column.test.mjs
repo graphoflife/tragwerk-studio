@@ -282,7 +282,7 @@ test('robustness: missing data, unknown keys → warnings, no throw', () => {
   a.model.lines[0].element.section = 99;
   const ra = designRCColumns(a.model, a.mesh, a.res, ['LC:1', 'CO:9']);
   assert.equal(ra.length, 0);
-  assert.ok(ra.warnings.some((w) => w === 'Line 1: no section – RC column design skipped'), ra.warnings.join('|'));
+  assert.ok(ra.warnings.some((w) => String(w) === 'Line 1: no section – RC column design skipped'), ra.warnings.join('|'));
   assert.ok(ra.warnings.some((w) => /CO:9/.test(w)));
   // unsupported shape, no fck, cover too large, no mesh beams
   const b = column({ L: 3, sec: { shape: 'T', dims: { h: 0.5, b: 0.6, tw: 0.2, tf: 0.15 } }, fns: { N: () => -500 } });

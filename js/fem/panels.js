@@ -1,6 +1,7 @@
 // Load panels (Lastverteilungsflächen): domains of type 'panel' carry no stiffness; their surface loads are
 // distributed onto the structural lines in the panel (beams, ribs, trusses, edges of plates/shells/walls).
-// Pure module (no DOM).
+// Pure module (no DOM). expandLoadPanels() resolves them once, before meshing and analysis: the mesher and
+// the FE core only ever see the resulting line loads, never a panel.
 //
 // domain = { type: 'panel', nodes, holes?, panel: { dist: 'two' | 'x' | 'y' } }
 //  'two'  two-way: every part of the panel goes to the nearest supporting line (tributary areas –
@@ -12,56 +13,11 @@
 // polygon area so the total load is preserved. Each supporting line receives a piecewise constant line load
 // (bins along the line).
 
-const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+import { domainFrame, pointInPolygon2D, projectOnSegment2D, raySegment2D } from '../mesh/geom.js';
+import { surfaceQ } from './loads.js';
+import { msg } from '../core/messages.js';
 
-/** Local axes of a polygon (SPEC §2.2 orientation rules). */
-export function polygonAxes(pts) {
-  let n = [0, 0, 0];
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[i], b = pts[(i + 1) % pts.length];
-    n[0] += (a[1] - b[1]) * (a[2] + b[2]); n[1] += (a[2] - b[2]) * (a[0] + b[0]); n[2] += (a[0] - b[0]) * (a[1] + b[1]);
-  }
-  n = norm(n);
-  const e = 1e-6;
-  if (n[2] < -e || (Math.abs(n[2]) <= e && (n[1] < -e || (Math.abs(n[1]) <= e && n[0] < 0)))) n = n.map((v) => -v);
-  const proj = (g) => sub(g, n.map((v) => v * dot(g, n)));
-  let ex = proj([1, 0, 0]);
-  if (Math.hypot(...ex) < 1e-6) ex = proj([0, 1, 0]);
-  ex = norm(ex);
-  return { ex, ey: cross(n, ex), ez: n };
-}
-
-function inPoly(p, poly) {
-  let c = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const a = poly[i], b = poly[j];
-    if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]) c = !c;
-  }
-  return c;
-}
-function distSeg2(p, a, b) {
-  const d = [b[0] - a[0], b[1] - a[1]], w = [p[0] - a[0], p[1] - a[1]];
-  const L2 = d[0] * d[0] + d[1] * d[1];
-  const t = L2 > 0 ? Math.max(0, Math.min(1, (w[0] * d[0] + w[1] * d[1]) / L2)) : 0;
-  return { d: Math.hypot(w[0] - t * d[0], w[1] - t * d[1]), t };
-}
-function polyArea(poly) {
-  let a = 0;
-  for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length]; a += p[0] * q[1] - q[0] * p[1]; }
-  return Math.abs(a) / 2;
-}
-// ray o + s·d (s > 0) against segment a–b (2D): { s, t } or null
-function raySeg(o, d, a, b) {
-  const e = [b[0] - a[0], b[1] - a[1]];
-  const den = d[0] * e[1] - d[1] * e[0];
-  if (Math.abs(den) < 1e-12) return null;
-  const w = [a[0] - o[0], a[1] - o[1]];
-  const s = (w[0] * e[1] - w[1] * e[0]) / den, t = (w[0] * d[1] - w[1] * d[0]) / den;
-  return s > 1e-9 && t >= -1e-9 && t <= 1 + 1e-9 ? { s, t: Math.min(1, Math.max(0, t)) } : null;
-}
+const inPoly = (q, poly) => pointInPolygon2D(q[0], q[1], poly);
 
 /**
  * Geometry of a panel: local frame, 2D polygon/holes, supporting lines and area samples with their
@@ -69,22 +25,10 @@ function raySeg(o, d, a, b) {
  */
 export function panelLayout(model, dom) {
   const nodes = new Map((model.nodes || []).map((n) => [n.id, n]));
+  const F = domainFrame(nodes, dom);
+  if (!F) return null;
   const P3 = (id) => { const n = nodes.get(id); return n ? [n.x, n.y, n.z] : null; };
-  const pts = dom.nodes.map(P3);
-  if (pts.length < 3 || pts.some((p) => !p)) return null;
-  const ax = polygonAxes(pts), o = pts[0];
-  const to2 = (p) => { const v = sub(p, o); return [dot(v, ax.ex), dot(v, ax.ey)]; };
-  const poly = pts.map(to2);
-  const holes = (dom.holes || []).map((h) => h.map(P3).filter(Boolean).map(to2));
-  const area = polyArea(poly) - holes.reduce((s, h) => s + polyArea(h), 0);
-  let size = 0;
-  for (const p of poly) size = Math.max(size, Math.hypot(p[0] - poly[0][0], p[1] - poly[0][1]));
-  const tol = 1e-3 + 1e-4 * size;
-  const insideOrOn = (q) => {
-    if (inPoly(q, poly) && !holes.some((h) => inPoly(q, h))) return true;
-    for (const ring of [poly, ...holes]) for (let i = 0; i < ring.length; i++) if (distSeg2(q, ring[i], ring[(i + 1) % ring.length]).d <= tol) return true;
-    return false;
-  };
+  const { poly, holes, area, to2 } = F;
   // supporting lines: structural (element) or edges of plates/shells/walls, lying in the panel
   const edgeKey = (a, b) => (a < b ? `${a}-${b}` : `${b}-${a}`);
   const domEdges = new Set();
@@ -97,12 +41,10 @@ export function panelLayout(model, dom) {
     const structural = (l.element && !['spring', 'rigid'].includes(l.element.type)) || domEdges.has(edgeKey(l.n1, l.n2));
     if (!structural) continue;
     const a = P3(l.n1), b = P3(l.n2);
-    if (!a || !b) continue;
-    if (Math.abs(dot(sub(a, o), ax.ez)) > tol * 10 || Math.abs(dot(sub(b, o), ax.ez)) > tol * 10) continue;
-    const a2 = to2(a), b2 = to2(b), m2 = [(a2[0] + b2[0]) / 2, (a2[1] + b2[1]) / 2];
-    if (!insideOrOn(a2) || !insideOrOn(b2) || !insideOrOn(m2)) continue;
+    if (!a || !b || !F.containsSegment(a, b)) continue;
+    const a2 = to2(a), b2 = to2(b);
     const L = Math.hypot(b2[0] - a2[0], b2[1] - a2[1]);
-    if (L > tol) targets.push({ line: l.id, a2, b2, L });
+    if (L > F.tol) targets.push({ line: l.id, a2, b2, L });
   }
   // area samples
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
@@ -124,7 +66,7 @@ export function panelLayout(model, dom) {
   const dir = mode === 'x' ? [1, 0] : mode === 'y' ? [0, 1] : null;
   // nearest supporting line; points on a bisector (equal distance) are shared evenly
   const nearest = (q) => {
-    const r = targets.map((tg) => distSeg2(q, tg.a2, tg.b2));
+    const r = targets.map((tg) => projectOnSegment2D(q, tg.a2, tg.b2));
     const dmin = Math.min(...r.map((x) => x.d));
     if (!Number.isFinite(dmin)) return [];
     const tie = r.map((x, i) => ({ i, t: x.t, d: x.d })).filter((x) => x.d <= dmin + 1e-9 * (1 + dmin));
@@ -135,7 +77,7 @@ export function panelLayout(model, dom) {
     if (dir) {
       const hit = (dv) => {
         let b = null;
-        targets.forEach((tg, i) => { const r = raySeg(q, dv, tg.a2, tg.b2); if (r && (!b || r.s < b.s)) b = { i, t: r.t, s: r.s }; });
+        targets.forEach((tg, i) => { const r = raySegment2D(q, dv, tg.a2, tg.b2); if (r && (!b || r.s < b.s)) b = { i, t: r.t, s: r.s }; });
         return b;
       };
       const f = hit(dir), g = hit([-dir[0], -dir[1]]);
@@ -143,10 +85,9 @@ export function panelLayout(model, dom) {
       else if (f || g) to = [{ i: (f || g).i, t: (f || g).t, w: 1 }];
     }
     if (!to) to = nearest(q);
-    const p = [o[0] + ax.ex[0] * q[0] + ax.ey[0] * q[1], o[1] + ax.ex[1] * q[0] + ax.ey[1] * q[1], o[2] + ax.ex[2] * q[0] + ax.ey[2] * q[1]];
-    return { p, dA, to };
+    return { p: F.from2(q), dA, to };
   });
-  return { ax, o, area, targets, samples };
+  return { ax: { ex: F.ex, ey: F.ey, ez: F.ez }, o: F.o, area, targets, samples };
 }
 
 /**
@@ -171,4 +112,37 @@ export function panelLineLoads(model, layout, qAt) {
     for (let k = 0; k < n; k++) if (Math.abs(b[k]) > 1e-12) out.push({ line: tg.line, a: k / n, b: (k + 1) / n, q: b[k] / ds });
   });
   return out;
+}
+
+/**
+ * Model for meshing and analysis: load panels removed, their surface loads replaced by line loads
+ * (lineDist pieces, global X/Y/Z components) on the supporting lines. The input model is not changed.
+ * @returns { model, warnings }
+ */
+export function expandLoadPanels(model) {
+  const panels = new Map((model.domains || []).filter((d) => d.type === 'panel').map((d) => [d.id, d]));
+  if (!panels.size) return { model, warnings: [] };
+  const layouts = new Map();
+  const loads = [], warnings = [];
+  for (const ld of model.loads || []) {
+    const dom = ld.domain != null ? panels.get(ld.domain) : null;
+    if (!dom) { loads.push(ld); continue; }
+    if (ld.type !== 'surface') { warnings.push(msg('panel.notSurface', { id: ld.id, panel: dom.id })); continue; }
+    if (!layouts.has(dom.id)) layouts.set(dom.id, panelLayout(model, dom));
+    const layout = layouts.get(dom.id);
+    if (!layout || !layout.targets.length) { warnings.push(msg('panel.noLines', { id: ld.id, panel: dom.id })); continue; }
+    // global direction of the load: panel normal / local axes, or a global axis (projected onto the plan)
+    const { ex, ey, ez } = layout.ax;
+    const dir = ld.dir || 'z';
+    const G = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] }[dir];
+    const vec = G ? G.map((c) => c * (ld.projected ? Math.abs(ez[0] * G[0] + ez[1] * G[1] + ez[2] * G[2]) : 1)) : { x: ex, y: ey, z: ez }[dir] || ez;
+    for (const pc of panelLineLoads(model, layout, (p) => surfaceQ(ld, p))) {
+      ['X', 'Y', 'Z'].forEach((d, k) => {
+        if (Math.abs(vec[k]) < 1e-12) return;
+        const q = pc.q * vec[k];
+        loads.push({ id: ld.id, lc: ld.lc, type: 'lineDist', line: pc.line, dir: d, q1: q, q2: q, a: pc.a, b: pc.b, projected: false, panel: dom.id });
+      });
+    }
+  }
+  return { model: { ...model, domains: model.domains.filter((d) => !panels.has(d.id)), loads }, warnings };
 }

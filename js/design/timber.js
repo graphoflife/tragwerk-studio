@@ -57,6 +57,7 @@ import {
   MEMBER_TYPES, designCode, num, pos, fmt, fmtMPa, designContext, collectLineForces,
   fillSectionProps, CheckSet, caseFactors,
 } from './common.js';
+import { msg } from '../core/messages.js';
 import { groupParams } from './combinations.js';
 
 const CHECKS = ['N', 'Vy', 'Vz', 'T', 'My', 'Mz', 'M+N', 'FB-y', 'FB-z', 'LTB'];
@@ -128,22 +129,22 @@ export function checkTimberMembers(model, mesh, staticResults, caseKeys, opts = 
         const r = checkMember(ctx, code, line, el, mat, opts || {});
         if (r) out.push(r);
       } catch (e) {
-        out.warnings.push(`Line ${line.id}: timber check failed (${e && e.message})`);
+        out.warnings.push(msg('failed.timber', { id: line.id, err: e && e.message }));
       }
     }
   } catch (e) {
-    out.warnings.push(`Timber design aborted: ${e && e.message}`);
+    out.warnings.push(msg('aborted.timber', { err: e && e.message }));
   }
   return out;
 }
 
 function checkMember(ctx, code, line, el, mat, opts) {
-  const W = (msg) => { ctx.warnings.push(`Line ${line.id}: ${msg} – timber check skipped`); return null; };
+  const W = (reason) => { ctx.warnings.push(msg('skip.timber', { id: line.id, reason })); return null; };
   const SIA = code === 'SIA';
   const tm = mat.timber;
-  if (!tm || typeof tm !== 'object') return W('material without timber properties');
+  if (!tm || typeof tm !== 'object') return W(msg('r.noTimber'));
   const fmk = pos(tm.fmk, NaN), ft0k = pos(tm.ft0k, NaN), fc0k = pos(tm.fc0k, NaN), fvk = pos(tm.fvk, NaN);
-  if (!(fmk > 0 && fc0k > 0)) return W('timber strengths fmk/fc0k missing');
+  if (!(fmk > 0 && fc0k > 0)) return W(msg('r.timberStrength'));
   const kind = tm.kind === 'glulam' ? 'glulam' : tm.kind === 'lvl' ? 'lvl' : 'solid';
   const E0mean = pos(tm.E0mean, pos(mat.E, NaN));
   const E005 = pos(tm.E005, E0mean * (kind === 'solid' ? 0.67 : 0.833));
@@ -152,23 +153,23 @@ function checkMember(ctx, code, line, el, mat, opts) {
   const sc = [1, 2, 3].includes(Number(opts.serviceClass)) ? Number(opts.serviceClass)
     : [1, 2, 3].includes(Number(tm.serviceClass)) ? Number(tm.serviceClass) : 1;
   const sec0 = ctx.sections.get(Number(el.section));
-  if (!sec0) return W('no section');
+  if (!sec0) return W(msg('r.noSection'));
   const p = fillSectionProps(sec0);
   const L = ctx.lineLength(line);
-  if (!(L > 0)) return W('zero length');
+  if (!(L > 0)) return W(msg('r.zeroLength'));
   const segs = ctx.segs.get(Number(line.id));
-  if (!segs || !segs.length) return W('no mesh beams');
+  if (!segs || !segs.length) return W(msg('r.noMesh'));
   const notes = [];
   const d = p.dims || {};
   let shape = 'GEN', h, b, D;
   if (p.shape === 'RECT' && d.h > 0 && d.b > 0) { shape = 'RECT'; h = d.h; b = d.b; }
   else if (p.shape === 'CIRC' && d.d > 0) { shape = 'CIRC'; D = d.d; h = b = D; }
-  if (!(p.A > 0 && p.Iy > 0 && p.Iz > 0)) return W('section lacks A/Iy/Iz');
+  if (!(p.A > 0 && p.Iy > 0 && p.Iz > 0)) return W(msg('r.secProps', { name: '' }));
   const Wy = p.Wely > 0 ? p.Wely : (h ? p.Iy / (h / 2) : NaN);
   const Wz = p.Welz > 0 ? p.Welz : (b ? p.Iz / (b / 2) : NaN);
-  if (shape === 'GEN') notes.push(`section shape ${p.shape}: km = 1, τ = 1.5·V/A, kh = 1`);
-  if (!(fvk > 0)) notes.push('fvk missing – shear not checked');
-  if (!(ft0k > 0)) notes.push('ft0k missing – tension checked with fc0k');
+  if (shape === 'GEN') notes.push(msg('tb.generic', { shape: p.shape }));
+  if (!(fvk > 0)) notes.push(msg('tb.noFvk'));
+  if (!(ft0k > 0)) notes.push(msg('tb.noFt0k'));
 
   // code-dependent factors
   const gMbase = pos(mat.gammaM, SIA ? (kind === 'solid' ? 1.7 : 1.5) : (kind === 'solid' ? 1.3 : kind === 'glulam' ? 1.25 : 1.2));
@@ -223,7 +224,7 @@ function checkMember(ctx, code, line, el, mat, opts) {
     const n = f.x.length;
     if (!n) continue;
     const du = caseDuration(ctx, ck, code);
-    if (!du.resolved) notes.push(`case ${ck}: load duration unknown – medium-term assumed`);
+    if (!du.resolved) notes.push(msg('tb.duration', { key: ck }));
     durSeen.add(du.dur);
     let fac, facTxt;
     if (SIA) {

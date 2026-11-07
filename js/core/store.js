@@ -267,7 +267,8 @@ export const SEL_KINDS = ['nodes', 'lines', 'domains', 'supports', 'loads'];
 function emptySelection() { return Object.fromEntries(SEL_KINDS.map((k) => [k, new Set()])); }
 
 function emptyResults() {
-  return { mesh: null, static: null, staticOpts: null, modal: null, buckling: null, spectrum: null, steel: null, rc: null, rcBeams: null, rcCols: null, punching: null, timber: null, designBasis: null };
+  // design: { rc, rcBeams, rcCols, punching, steel, timber, basis } – derived from static, cleared with it
+  return { fem: null, mesh: null, static: null, staticOpts: null, modal: null, buckling: null, spectrum: null, design: {} };
 }
 
 export function migrate(m) {

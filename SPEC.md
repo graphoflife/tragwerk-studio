@@ -152,7 +152,8 @@ loads: [
  { id, lc, type: 'linePoint', line, dir, F, pos: 0.5, moment: false },     // concentrated force (or moment if moment:true, about dir axis)
  { id, lc, type: 'surface', domain, dir: 'X'|'Y'|'Z'|'z', q, projected:false }, // uniform kN/m², z = domain local normal
    //  optional dist: 'linear' (q at p1 → q2 at p2, constant outside) | 'hydro' (q·(z0 − z) below z0; q = kN/m² per m)
-   //  on a load panel (domain.type 'panel') the load is distributed to its lines (js/fem/panels.js)
+   //  load panels (domain.type 'panel') are resolved before meshing: expandLoadPanels(model) (js/fem/panels.js)
+   //  replaces them by lineDist loads – mesher and FE core never see a panel
  { id, lc, type: 'surfaceLine', domain, a:[x,y,z], b:[x,y,z], dir, q1, q2, projected }, // line load anywhere on a surface
  { id, lc, type: 'surfacePoint', domain, p:[x,y,z], dir, F },                           // point load anywhere on a surface
  { id, lc, type: 'tempLine', line, dT: 0, dTz: 0, dTy: 0 },  // uniform + linear gradients (T(+z face) - T(-z face))
@@ -237,6 +238,9 @@ Every design function accepts an optional last argument `opts` with `opts.code: 
 (default: `model.settings.code ?? 'EC'`). `'SIA'` = Swiss codes: SIA 260 (basis, combinations),
 SIA 261 (actions, seismic spectrum), SIA 262 (concrete), SIA 263 (steel), SIA 265 (timber).
 Result objects carry `code` and clause references in `detail` strings (e.g. "SIA 263 4.5.2").
+`notes` and `warnings` are structured messages `msg(code, params)` (js/core/messages.js, one table with
+English and German text; `String(m)` = English). The UI keeps design results in `results.design`
+(`rc`, `rcBeams`, `rcCols`, `punching`, `steel`, `timber`, `basis`), cleared with every static analysis.
 
 ```js
 import { generateCombinations } from './js/design/combinations.js';

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { runStatic } from '../../js/fem/index.js';
 import { buildMesh } from '../../js/mesh/mesher.js';
-import { panelLayout, panelLineLoads } from '../../js/fem/panels.js';
+import { panelLayout, panelLineLoads, expandLoadPanels } from '../../js/fem/panels.js';
 import { createModel, addNode, addLine, addDomain, defaultLineElement } from '../../js/core/model.js';
 import { EXAMPLES } from '../../js/examples.js';
 
@@ -23,7 +23,8 @@ function plate(loads) {
   m.settings.meshSize = 0.5;
   return m;
 }
-function sums(m) {
+function sums(model) {
+  const m = expandLoadPanels(model).model; // the analysis boundary: panels become line loads
   const mesh = buildMesh(m, {});
   const r = runStatic(m, mesh, {});
   assert.equal(r.error, null, JSON.stringify(r.error));
@@ -88,6 +89,27 @@ T('load panel, two-way: 45° distribution (triangles 20 kN, trapezoids 40 kN) an
   close(v[0], 20, 0.03, 'short beam'); close(v[1], 20, 0.03, 'short beam'); close(v[2], 40, 0.02, 'long beam'); close(v[3], 40, 0.02, 'long beam');
   const s = sums(m);
   close(s.Rz, 120, 1e-6, 'ΣRz');
+});
+
+T('expandLoadPanels: panels leave the model, their loads become line loads, input unchanged', () => {
+  const { m } = grid('two');
+  const before = JSON.stringify(m);
+  const { model: fm, warnings } = expandLoadPanels(m);
+  assert.equal(JSON.stringify(m), before, 'input model not mutated');
+  assert.equal(warnings.length, 0);
+  assert.ok(!fm.domains.some((d) => d.type === 'panel'));
+  assert.ok(fm.loads.every((l) => l.type === 'lineDist'));
+  let total = 0;
+  for (const l of fm.loads) { const ln = fm.lines.find((x) => x.id === l.line), a = fm.nodes.find((n) => n.id === ln.n1), b = fm.nodes.find((n) => n.id === ln.n2); total += l.q1 * (l.b - l.a) * Math.hypot(b.x - a.x, b.y - a.y); }
+  close(total, -120, 1e-9, 'Σ line loads = q·A');
+  // a panel without supporting lines: load dropped with a warning
+  const lone = createModel('l'); lone.loadCases = [{ id: 1 }];
+  const ids = [[0, 0], [1, 0], [1, 1]].map(([x, y]) => addNode(lone, [x, y, 0]));
+  const pd = addDomain(lone, ids, { type: 'panel', material: null, thickness: 0 });
+  lone.loads.push({ id: 7, lc: 1, type: 'surface', domain: pd, dir: 'Z', q: -1 });
+  const ex = expandLoadPanels(lone);
+  assert.equal(ex.model.loads.length, 0);
+  assert.ok(/no supporting lines/.test(ex.warnings[0]));
 });
 
 T('load panel, one-way in x: everything to the two short beams', () => {

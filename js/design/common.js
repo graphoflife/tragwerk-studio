@@ -9,6 +9,9 @@
 // Design-code family: every public design function accepts `opts.code` = 'EC' | 'SIA'
 // (default: model.settings.code ?? 'EC'), see SPEC.md §5 and `designCode()` below.
 
+import { domainFrame } from '../mesh/geom.js';
+import { msg } from '../core/messages.js';
+
 /** Upper bound for reported utilizations (avoids Infinity / NaN in results and JSON). */
 export const ETA_CAP = 999;
 
@@ -97,7 +100,7 @@ export function resolveCaseKeys(model, cases, caseKeys, warnings, need = 'beams'
   for (const k of keys) {
     const r = cases ? cases[k] : null;
     if (r && r[need]) out.push(k);
-    else if (warnings) warnings.push(`Result case '${k}' not available – ignored.`);
+    else if (warnings) warnings.push(msg('case.missing', { key: k }));
   }
   return out;
 }
@@ -169,6 +172,19 @@ export function designContext(model, mesh, staticResults, caseKeys, warnings, ne
     warnings,
   };
   ctx.lineLength = (line) => lineLength(ctx.nodes, line);
+  // shell elements per domain and (memoized) domain frames – shared by all design modules
+  ctx.shellsByDomain = new Map();
+  (mesh?.shells || []).forEach((s, e) => {
+    if (!s) return;
+    const id = Number(s.domain);
+    if (!ctx.shellsByDomain.has(id)) ctx.shellsByDomain.set(id, []);
+    ctx.shellsByDomain.get(id).push(e);
+  });
+  const frames = new Map();
+  ctx.frame = (dom) => {
+    if (!frames.has(dom.id)) frames.set(dom.id, domainFrame(ctx.nodes, dom));
+    return frames.get(dom.id);
+  };
   return ctx;
 }
 

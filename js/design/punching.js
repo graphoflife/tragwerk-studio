@@ -34,23 +34,11 @@
 //   VRd,max = 2·VRd,c ≤ 3.5·τcd·dv·uEff (with punching reinforcement).
 import { designCode, pos, designContext } from './common.js';
 import { concreteParams, surfaceLayout, providedAreas } from './concrete.js';
+import { sub, dot, norm as len } from '../mesh/geom.js';
+import { msg } from '../core/messages.js';
 
 const ES = 200e6;
-const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const len = (a) => Math.hypot(a[0], a[1], a[2]);
 const P = (n) => [n.x, n.y, n.z];
-
-function insideLoops(loops, p) {
-  let c = false;
-  for (const poly of loops) {
-    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-      const a = poly[i], b = poly[j];
-      if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]) c = !c;
-    }
-  }
-  return c;
-}
 
 /** Points of a rounded-rectangle (or circular) control perimeter at distance a around the column. */
 function perimeterPoints(c1, c2, round, a, n = 72) {
@@ -100,10 +88,8 @@ export function checkPunching(model, mesh, staticResults, caseKeys, opts = {}) {
     else if (mesh.nodeModelId) Array.from(mesh.nodeModelId).forEach((id, i) => { if (id > 0) modelToMesh.set(Number(id), i); });
     // slab domains: concrete plate/shell with their mesh corner nodes
     const slabs = [];
-    const byDom = new Map();
-    shells.forEach((s, e) => { if (s) { const id = Number(s.domain); if (!byDom.has(id)) byDom.set(id, []); byDom.get(id).push(e); } });
     for (const dom of model.domains || []) {
-      const elems = byDom.get(Number(dom.id));
+      const elems = ctx.shellsByDomain.get(Number(dom.id));
       if (!elems?.length) continue;
       const sh = shells[elems[0]];
       const mat = ctx.materials.get(Number(sh.material ?? dom.material));
@@ -112,12 +98,11 @@ export function checkPunching(model, mesh, staticResults, caseKeys, opts = {}) {
       const L = surfaceLayout(dom.rc, t);
       const Pc = concreteParams(mat, L.fyk, code, opts);
       if (!Pc) continue;
-      const o = P(ctx.nodes.get(dom.nodes[0]));
-      const to2 = (p) => { const v = sub(p, o); return [dot(v, sh.ex), dot(v, sh.ey)]; };
-      const loops = [dom.nodes, ...(dom.holes || [])].map((lp) => lp.map((id) => to2(P(ctx.nodes.get(id)))));
+      const F = ctx.frame(dom);
+      if (!F) continue;
       const corners = new Map(); // mesh node → [corner index e*4+c]
       for (const e of elems) shells[e].nodes.forEach((nd, c) => { if (!corners.has(nd)) corners.set(nd, []); corners.get(nd).push(e * 4 + c); });
-      slabs.push({ dom, sh, t, L, P: Pc, o, to2, loops, corners, prov: dom.rcProv ? providedAreas(dom.rcProv) : null });
+      slabs.push({ dom, sh, t, L, P: Pc, F, corners, prov: dom.rcProv ? providedAreas(dom.rcProv) : null });
     }
     if (!slabs.length) return out;
     // column lines per model node
@@ -208,9 +193,9 @@ export function checkPunching(model, mesh, staticResults, caseKeys, opts = {}) {
       const pos3 = meshPos(mi);
       const ex = slab.sh.ex, ey = slab.sh.ey;
       const pts2 = perimeterPoints(c1, c2, round, a);
-      const coplanar = slabs.filter((s) => Math.abs(dot(sub(pos3, s.o), s.sh.ez)) < 1e-3 + 0.01 * s.t && Math.abs(dot(s.sh.ez, ez)) > 0.99);
+      const coplanar = slabs.filter((s) => Math.abs(s.F.dist(pos3)) <= s.F.tol && Math.abs(dot(s.F.ez, ez)) > 0.99);
       const pts3 = pts2.map(([u, v]) => [pos3[0] + ex[0] * u + ey[0] * v, pos3[1] + ex[1] * u + ey[1] * v, pos3[2] + ex[2] * u + ey[2] * v]);
-      const inFlags = pts3.map((p) => coplanar.some((s) => insideLoops(s.loops, s.to2(p))));
+      const inFlags = pts3.map((p) => coplanar.some((s) => s.F.inside2(s.F.to2(p))));
       const share = inFlags.filter(Boolean).length / pts3.length;
       if (share < 0.05) continue;
       const type = share >= 0.95 ? 'interior' : share >= 0.4 ? 'edge' : 'corner';
@@ -267,7 +252,7 @@ export function checkPunching(model, mesh, staticResults, caseKeys, opts = {}) {
       out.zones.push({ p: it.center, r: it.zoneR });
     }
   } catch (e) {
-    warnings.push(`Punching check aborted: ${e && e.message}`);
+    warnings.push(msg('aborted.punching', { err: e && e.message }));
   }
   return out;
 }

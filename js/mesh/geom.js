@@ -92,6 +92,14 @@ export function pointInPolygon2D(x, y, poly) {
   return inside;
 }
 
+/** Closest point of segment a–b to q (2D): { d: distance, t: parameter 0…1 along a→b }. */
+export function projectOnSegment2D(q, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const l2 = dx * dx + dy * dy;
+  const t = l2 > 0 ? Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / l2)) : 0;
+  return { d: Math.hypot(a[0] + t * dx - q[0], a[1] + t * dy - q[1]), t };
+}
+
 /** Distance from (px,py) to segment a-b in 2D. */
 export function distPointSeg2D(px, py, ax, ay, bx, by) {
   const dx = bx - ax, dy = by - ay;
@@ -122,4 +130,81 @@ export function segSegIntersect2D(p1, p2, p3, p4, eps = 1e-9) {
   const u = (wx * d1y - wy * d1x) / den;
   if (t < eps || t > 1 - eps || u < eps || u > 1 - eps) return null;
   return { t, u };
+}
+
+/** Ray o + s·d (2D, s > 0) against segment a–b → { s, t } (t ∈ [0, 1] on the segment) or null. */
+export function raySegment2D(o, d, a, b) {
+  const e = [b[0] - a[0], b[1] - a[1]];
+  const den = d[0] * e[1] - d[1] * e[0];
+  if (Math.abs(den) < 1e-12) return null;
+  const w = [a[0] - o[0], a[1] - o[1]];
+  const s = (w[0] * e[1] - w[1] * e[0]) / den, t = (w[0] * d[1] - w[1] * d[0]) / den;
+  return s > 1e-9 && t >= -1e-9 && t <= 1 + 1e-9 ? { s, t: Math.min(1, Math.max(0, t)) } : null;
+}
+
+/** Barycentric weights [u, v, w] of p (lying in the plane of the triangle A, B, C), or null if outside. */
+export function barycentric(p, A, B, C, eps = 1e-6) {
+  const v0 = sub(B, A), v1 = sub(C, A), v2 = sub(p, A);
+  const d00 = dot(v0, v0), d01 = dot(v0, v1), d11 = dot(v1, v1), d20 = dot(v2, v0), d21 = dot(v2, v1);
+  const den = d00 * d11 - d01 * d01;
+  if (Math.abs(den) < 1e-18) return null;
+  const v = (d11 * d20 - d01 * d21) / den, w = (d00 * d21 - d01 * d20) / den, u = 1 - v - w;
+  return u >= -eps && v >= -eps && w >= -eps ? [u, v, w] : null;
+}
+
+/**
+ * Point p in a planar quad element (corners ps[0..3], normal ez) within tol of its plane:
+ * { k: [3 corner indices], w: [3 weights] } of the triangle 0-1-2 or 0-2-3 containing the projection, or null.
+ */
+export function quadHit(ps, p, tol, ez) {
+  const nz = norm(ez) || 1;
+  const dist = dot(sub(p, ps[0]), ez) / nz;
+  if (Math.abs(dist) > tol) return null;
+  const q = [p[0] - ez[0] / nz * dist, p[1] - ez[1] / nz * dist, p[2] - ez[2] / nz * dist];
+  for (const tri of [[0, 1, 2], [0, 2, 3]]) {
+    const w = barycentric(q, ps[tri[0]], ps[tri[1]], ps[tri[2]]);
+    if (w) return { k: tri, w };
+  }
+  return null;
+}
+
+/**
+ * Frame of a planar polygon (outer loop + holes, 3D points): local axes (SPEC §2.2), 2D loops and the
+ * containment tests behind every "lies on this surface" decision. One tolerance policy: tol = 1 mm +
+ * 1e-4 · size, used for the plane distance and the boundary unless a caller passes its own.
+ * @returns null for degenerate polygons
+ */
+export function planarFrame(outer, holes = []) {
+  const ax = domainAxes(outer);
+  if (!ax) return null;
+  const o = outer[0];
+  const to2 = (p) => { const v = sub(p, o); return [dot(v, ax.ex), dot(v, ax.ey)]; };
+  const from2 = (q) => [0, 1, 2].map((j) => o[j] + ax.ex[j] * q[0] + ax.ey[j] * q[1]);
+  const poly = outer.map(to2), hp = holes.filter((h) => h.length >= 3).map((h) => h.map(to2));
+  const loops = [poly, ...hp];
+  let size = 0;
+  for (const q of poly) size = Math.max(size, Math.hypot(q[0] - poly[0][0], q[1] - poly[0][1]));
+  const tol = 1e-3 + 1e-4 * size;
+  const dist = (p) => dot(sub(p, o), ax.ez);
+  const inside2 = (q) => pointInPolygon2D(q[0], q[1], poly) && !hp.some((h) => pointInPolygon2D(q[0], q[1], h));
+  const edgeDist2 = (q) => {
+    let d = Infinity;
+    for (const l of loops) for (let i = 0; i < l.length; i++) { const a = l[i], b = l[(i + 1) % l.length]; d = Math.min(d, distPointSeg2D(q[0], q[1], a[0], a[1], b[0], b[1])); }
+    return d;
+  };
+  const contains = (p, { plane = tol, edge = tol } = {}) => Math.abs(dist(p)) <= plane && (inside2(to2(p)) || edgeDist2(to2(p)) <= edge);
+  return {
+    ...ax, o, poly, holes: hp, loops, size, tol, to2, from2, dist, inside2, edgeDist2, contains,
+    area: Math.abs(polygonArea2D(poly)) - hp.reduce((s, h) => s + Math.abs(polygonArea2D(h)), 0),
+    /** segment a–b in the plane and inside or on the boundary (both ends and the midpoint) */
+    containsSegment: (a, b, opts) => contains(a, opts) && contains(b, opts) && contains(scale(add(a, b), 0.5), opts),
+  };
+}
+
+/** planarFrame of a model domain; nodes: Map(id → {x, y, z}). null if nodes are missing or degenerate. */
+export function domainFrame(nodes, dom) {
+  const P = (id) => { const n = nodes.get(id); return n ? [n.x, n.y, n.z] : null; };
+  const outer = (dom.nodes || []).map(P);
+  if (outer.length < 3 || outer.some((p) => !p)) return null;
+  return planarFrame(outer, (dom.holes || []).map((h) => h.map(P).filter(Boolean)));
 }

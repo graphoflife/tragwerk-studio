@@ -11,6 +11,7 @@ import { transformDialog, splitDialog } from './dialogs/transform.js';
 import { generatorDialog } from './dialogs/generators.js';
 import { runStatic, runModalDialog, runBucklingDialog, runSpectrumDialog, runDesign, meshGenerate, meshSettings, checkModel } from './dialogs/analysis.js';
 import { rcParamsDialog, rcProvidedDialog, rcProtocolDialog, rcBeamDetail, memberDetail } from './dialogs/rc.js';
+import { designComp, isRcLayer } from './results-data.js';
 import { settingsDialog, modelInfoDialog } from './dialogs/settings.js';
 import { openTables } from './dialogs/tables.js';
 import { openReport } from './dialogs/report.js';
@@ -44,11 +45,12 @@ export function createCommands(app) {
   const viewOn = (k) => () => !!st.view[k];
   const showRes = (kind, component) => () => app.showResults(kind, component);
   const isRc = () => st.resultView.kind === 'rc';
-  const rcLayer = () => (/^a[xy][bt]$/.test(st.resultView.component) ? st.resultView.component : 'axb');
-  // show an RC result; designs first when there is no result yet
-  const showRc = async (patch, need = 'rc') => {
-    const have = need === 'rcBeam' ? st.results.rcBeams : need === 'rcCol' ? st.results.rcCols : st.results.rc;
-    if (!have) { const ok = await runDesign(app, need); if (!ok) return; }
+  const rcLayer = () => (isRcLayer(st.resultView.component) ? st.resultView.component : 'axb');
+  const rcSource = () => designComp(st.resultView.component)?.source;
+  // show an RC result; runs the design that produces the component when its results are missing
+  const showRc = async (patch) => {
+    const comp = designComp(patch.component ?? st.resultView.component) || designComp('axb');
+    if (!st.results.design[comp.source]) { const ok = await runDesign(app, comp.run); if (!ok) return; }
     st.setResultView({ kind: 'rc', ...patch });
     app.showSide('results');
   };
@@ -208,14 +210,14 @@ export function createCommands(app) {
     designRC: { label: 'Flächen bemessen', desc: 'Erforderliche Bewehrung axb, ayb, axt, ayt in Platten und Schalen (Wood-Armer, EN 1992-1-1 / SIA 262), Schubnachweis und Durchstanzen', icon: 'run', run: () => runDesign(app, 'rc') },
     designRCBeam: { label: 'Balken bemessen', desc: 'Längs- und Bügelbewehrung von Betonbalken und Rippen (Plattenbalken mit mitwirkender Plattenbreite)', icon: 'beam', run: () => runDesign(app, 'rcBeam') },
     designRCCol: { label: 'Stützen bemessen', desc: 'Stahlbetonstützen: N-M-Interaktion (zweiachsig), Schlankheit und Theorie II. Ordnung (Modellstütze, Nennkrümmung), Bewehrungsvorschlag', icon: 'column', run: () => runDesign(app, 'rcCol') },
-    resRcCol: { label: 'Stützen', desc: 'Ausnutzung der Stahlbetonstützen mit der vorgeschlagenen Bewehrung – Doppelklick zeigt das Interaktionsdiagramm', icon: 'column', run: () => showRc({ component: 'colEta' }, 'rcCol'), active: () => isRc() && ['colEta', 'colAs'].includes(st.resultView.component) },
+    resRcCol: { label: 'Stützen', desc: 'Ausnutzung der Stahlbetonstützen mit der vorgeschlagenen Bewehrung – Doppelklick zeigt das Interaktionsdiagramm', icon: 'column', run: () => showRc({ component: 'colEta' }), active: () => isRc() && rcSource() === 'rcCols' },
     rcProvided: { label: 'Vorhandene Bewehrung', desc: 'Gewählte Flächenbewehrung (Ø / Abstand je Lage) vorgeben – zeigt dann fehlende Zulagen', icon: 'grid', run: () => rcProvidedDialog(app) },
-    resRcReq: { label: 'Erforderlich', desc: 'Erforderliche Bewehrung der gewählten Lage', icon: 'contour', run: () => showRc({ rcMode: 'req', component: rcLayer() }), active: () => isRc() && st.resultView.rcMode !== 'prov' && st.resultView.rcMode !== 'miss' && /^a[xy][bt]$/.test(st.resultView.component) },
-    resRcProv: { label: 'Vorhanden', desc: 'Vorgegebene (gewählte) Bewehrung der Lage', icon: 'grid', run: () => showRc({ rcMode: 'prov', component: rcLayer() }), active: () => isRc() && st.resultView.rcMode === 'prov' && /^a[xy][bt]$/.test(st.resultView.component) },
-    resRcMiss: { label: 'Fehlend', desc: 'Fehlende Bewehrung = erforderlich − vorhanden (Zulagen)', icon: 'alert', run: () => showRc({ rcMode: 'miss', component: rcLayer() }), active: () => isRc() && st.resultView.rcMode === 'miss' && /^a[xy][bt]$/.test(st.resultView.component) },
+    resRcReq: { label: 'Erforderlich', desc: 'Erforderliche Bewehrung der gewählten Lage', icon: 'contour', run: () => showRc({ rcMode: 'req', component: rcLayer() }), active: () => isRc() && st.resultView.rcMode !== 'prov' && st.resultView.rcMode !== 'miss' && isRcLayer(st.resultView.component) },
+    resRcProv: { label: 'Vorhanden', desc: 'Vorgegebene (gewählte) Bewehrung der Lage', icon: 'grid', run: () => showRc({ rcMode: 'prov', component: rcLayer() }), active: () => isRc() && st.resultView.rcMode === 'prov' && isRcLayer(st.resultView.component) },
+    resRcMiss: { label: 'Fehlend', desc: 'Fehlende Bewehrung = erforderlich − vorhanden (Zulagen)', icon: 'alert', run: () => showRc({ rcMode: 'miss', component: rcLayer() }), active: () => isRc() && st.resultView.rcMode === 'miss' && isRcLayer(st.resultView.component) },
     resRcShear: { label: 'Schub', desc: 'Querkraftnachweis der Platte ohne Schubbewehrung: vEd / vRd,c', icon: 'stress', run: () => showRc({ component: 'vRatio' }), active: () => isRc() && st.resultView.component === 'vRatio' },
     resPunch: { label: 'Durchstanzen', desc: 'Durchstanznachweis an Stützen und Punktlagern (EN 1992-1-1 6.4 / SIA 262 4.3.6)', icon: 'target', run: () => showRc({ component: 'punch' }), active: () => isRc() && st.resultView.component === 'punch' },
-    resRcBeam: { label: 'Balkenbewehrung', desc: 'Erforderliche Längsbewehrung der Betonbalken (unten/oben) und Bügel', icon: 'beam', run: () => showRc({ component: 'AsBot' }, 'rcBeam'), active: () => isRc() && ['AsBot', 'AsTop', 'Asw'].includes(st.resultView.component) },
+    resRcBeam: { label: 'Balkenbewehrung', desc: 'Erforderliche Längsbewehrung der Betonbalken (unten/oben) und Bügel', icon: 'beam', run: () => showRc({ component: 'AsBot' }), active: () => isRc() && rcSource() === 'rcBeams' },
     rcProtocol: { label: 'Bemessungsprotokoll', desc: 'Was wurde wie bemessen? Parameter, massgebende Kombinationen, Maxima, Bewehrungsvorschlag, Nachweise', icon: 'fileText', run: () => rcProtocolDialog(app) },
     rcDetail: { label: 'Bemessungsdetails', desc: 'Ausführliche Bemessung des gewählten Balkens: Verläufe, Querschnitt, Bewehrungsvorschlag', icon: 'info', run: () => { const id = [...st.selection.lines][0]; if (!id) return toast(t('Bitte einen Betonbalken auswählen.'), 'info'); rcBeamDetail(app, id); } },
     // ---- design: steel / timber

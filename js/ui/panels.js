@@ -8,9 +8,9 @@ import { openMaterials, openSections, openLoadCases, openCombinations } from './
 import { editReleases, supportDialog, designParams } from './dialogs/assign.js';
 import { nodeLoadDialog, lineLoadDialog, surfaceLoadDialog, describeLoad } from './dialogs/loads.js';
 import { runStatic, runModalDialog, runBucklingDialog, runDesign } from './dialogs/analysis.js';
-import { COMPONENTS, caseOptions, caseSummary, componentDef, UTIL_CHECKS } from './results-data.js';
+import { COMPONENTS, caseOptions, caseSummary, componentDef, UTIL_CHECKS, isRcLayer, hasDesign } from './results-data.js';
 import { rcParamsDialog, rcProvidedDialog, rcProtocolDialog, rcBeamDetail, memberDetail, columnDetail } from './dialogs/rc.js';
-import { designMessage, checkName, layerName, slabSuggestion, beamSuggestion, meshText, barsText, stirrupText, POS_NAMES } from './design-text.js';
+import { designMessage, withoutCodes, checkName, layerName, slabSuggestion, beamSuggestion, meshText, barsText, stirrupText, POS_NAMES } from './design-text.js';
 import { PALETTE_NAMES } from './vp-util.js';
 import { pointKeys } from './pointinput.js';
 import { renderParts } from './parts-ui.js';
@@ -462,9 +462,7 @@ function renderResults(app, el) {
   if (R.static || R.spectrum) fams.push({ value: 'static', label: t('Statik'), icon: 'diagram' });
   if (R.modal) fams.push({ value: 'modal', label: t('Eigenf.'), icon: 'vibration' });
   if (R.buckling) fams.push({ value: 'buckling', label: t('Knicken'), icon: 'buckling' });
-  if (R.steel) fams.push({ value: 'steel', label: t('Stahl'), icon: 'steel' });
-  if (R.rc || R.rcBeams || R.rcCols) fams.push({ value: 'rc', label: t('Beton'), icon: 'concrete' });
-  if (R.timber) fams.push({ value: 'timber', label: t('Holz'), icon: 'timber' });
+  for (const [f, label, icon] of [['steel', t('Stahl'), 'steel'], ['rc', t('Beton'), 'concrete'], ['timber', t('Holz'), 'timber']]) if (hasDesign(R, f)) fams.push({ value: f, label, icon });
   if (!fams.length) {
     el.appendChild(h('div.empty', ic('diagram'), h('div', t('Noch keine Ergebnisse'))));
     el.appendChild(h('div.list', { style: { gap: '8px' } },
@@ -587,7 +585,7 @@ function modePanel(app, el) {
 
 function utilPanel(app, el) {
   const st = app.store, rv = st.resultView, kind = rv.kind;
-  const list = (kind === 'steel' ? st.results.steel : st.results.timber) || [];
+  const list = (kind === 'steel' ? st.results.design.steel : st.results.design.timber) || [];
   const check = rv.component && rv.component !== 'eta' ? rv.component : null;
   const etaOf = (r) => (check ? r.checks?.[check]?.eta ?? null : r.eta ?? 0);
   const sorted = list.filter((r) => etaOf(r) != null).sort((a, b) => etaOf(b) - etaOf(a));
@@ -630,18 +628,18 @@ function rcPanel(app, el) {
   const set = (p) => st.setResultView(p);
   const comp = rv.component;
   // --- surfaces
-  if (R.rc) {
+  if (R.design.rc) {
     const sec = h('div.side-section', h('div.side-section-title', ic('domain'), t('Flächenbewehrung')));
-    const isLayer = /^a[xy][bt]$/.test(comp);
+    const isLayer = isRcLayer(comp);
     sec.appendChild(segmented([{ value: 'req', label: t('Erforderlich') }, { value: 'prov', label: t('Vorhanden') }, { value: 'miss', label: t('Fehlend') }], isLayer ? rv.rcMode || 'req' : null,
       (v) => set({ rcMode: v, component: isLayer ? comp : 'axb' }), { full: true }));
     const chips = h('div.chip-row', { style: { margin: '8px 0' } });
     for (const k of ['axb', 'ayb', 'axt', 'ayt']) chips.appendChild(h('button.btn.sm' + (comp === k ? '.primary' : ''), { onclick: () => set({ component: k }), tip: [`${k}: ${layerName(k)}`, t('Bewehrung in lokaler {d}-Richtung, {f} (lokale z-Achse zeigt nach oben)', { d: k[1], f: k[2] === 'b' ? t('untere Lage') : t('obere Lage') })] }, k));
     chips.appendChild(h('button.btn.sm' + (comp === 'vRatio' ? '.primary' : ''), { onclick: () => set({ component: 'vRatio' }), tip: [t('Querkraft vEd/vRd,c'), t('Platte ohne Schubbewehrung')] }, t('Schub')));
-    if (R.punching?.items?.length) chips.appendChild(h('button.btn.sm' + (comp === 'punch' ? '.primary' : ''), { onclick: () => set({ component: 'punch' }) }, t('Durchstanzen')));
+    if (R.design.punching?.items?.length) chips.appendChild(h('button.btn.sm' + (comp === 'punch' ? '.primary' : ''), { onclick: () => set({ component: 'punch' }) }, t('Durchstanzen')));
     sec.appendChild(chips);
     // summary per domain: maxima with suggestions (what the design produced)
-    for (const d of R.rc.domains.slice(0, 12)) {
+    for (const d of R.design.rc.domains.slice(0, 12)) {
       const mat = st.idx.materials.get(d.material);
       const grid = h('div.rc-sum');
       ['axb', 'ayb', 'axt', 'ayt'].forEach((k, j) => {
@@ -657,14 +655,14 @@ function rcPanel(app, el) {
           h('button.icon-btn.sm', { onclick: () => { st.select({ domains: [d.id] }, 'replace'); app.zoomSelection(); }, tip: [t('Zeigen')] }, ic('target'))),
         grid));
     }
-    if (R.rc.domains.length > 12) sec.appendChild(h('div.small.muted', t('… und {n} weitere', { n: R.rc.domains.length - 12 })));
+    if (R.design.rc.domains.length > 12) sec.appendChild(h('div.small.muted', t('… und {n} weitere', { n: R.design.rc.domains.length - 12 })));
     sec.appendChild(h('div.small.muted', { style: { marginTop: '6px' } }, t('Werte: Maximum je Fläche über alle Bemessungskombinationen, inkl. Mindestbewehrung. Vorschlag mit dem Ø aus den Bewehrungsparametern.')));
     el.appendChild(sec);
   } else {
     el.appendChild(h('button.btn.block', { style: { marginBottom: '10px' }, onclick: () => runDesign(app, 'rc') }, ic('run'), t('Flächen bemessen')));
   }
   // --- punching
-  const P = R.punching?.items || [];
+  const P = R.design.punching?.items || [];
   if (P.length) {
     const box = h('div.list');
     for (const it of [...P].sort((a, b) => b.eta - a.eta).slice(0, 30)) {
@@ -678,7 +676,7 @@ function rcPanel(app, el) {
     el.appendChild(section(t('Durchstanzen'), box));
   }
   // --- beams
-  const beams = R.rcBeams || [];
+  const beams = R.design.rcBeams || [];
   if (beams.length) {
     const chips = h('div.chip-row', { style: { marginBottom: '8px' } });
     for (const [k, l] of [['AsBot', t('As unten')], ['AsTop', t('As oben')], ['Asw', t('Bügel')]]) chips.appendChild(h('button.btn.sm' + (comp === k ? '.primary' : ''), { onclick: () => set({ component: k }) }, l));
@@ -695,9 +693,9 @@ function rcPanel(app, el) {
   } else {
     el.appendChild(h('button.btn.block', { style: { marginBottom: '10px' }, onclick: () => runDesign(app, 'rcBeam') }, ic('beam'), t('Balken bemessen')));
   }
-  if (R.rc && R.mesh?.shells.length) el.appendChild(sectionLinesBlock(app));
+  if (R.design.rc && R.mesh?.shells.length) el.appendChild(sectionLinesBlock(app));
   // --- columns
-  const colsR = R.rcCols || [];
+  const colsR = R.design.rcCols || [];
   if (colsR.length) {
     const chips = h('div.chip-row', { style: { marginBottom: '8px' } });
     for (const [k, l] of [['colEta', t('Ausnutzung')], ['colAs', t('As erf.')]]) chips.appendChild(h('button.btn.sm' + (comp === k ? '.primary' : ''), { onclick: () => set({ component: k }) }, l));
@@ -715,7 +713,7 @@ function rcPanel(app, el) {
   } else {
     el.appendChild(h('button.btn.block', { style: { marginBottom: '10px' }, onclick: () => runDesign(app, 'rcCol') }, ic('column'), t('Stützen bemessen')));
   }
-  const w = [...(R.rc?.warnings || []), ...(R.rcBeams?.warnings || []), ...(R.rcCols?.warnings || [])].filter((x) => !/vEd > vRd,c/.test(x)).map(designMessage);
+  const w = withoutCodes([...(R.design.rc?.warnings || []), ...(R.design.rcBeams?.warnings || []), ...(R.design.rcCols?.warnings || [])], 'surf.shear').map(designMessage); // shear: shown per surface
   if (w.length) el.appendChild(section(t('Hinweise'), ...w.slice(0, 8).map((x) => hintBox(x, 'warn'))));
   el.appendChild(h('div.list', { style: { gap: '6px' } },
     h('button.btn.block.primary', { onclick: () => rcProtocolDialog(app) }, ic('fileText'), t('Bemessungsprotokoll')),

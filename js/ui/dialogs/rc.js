@@ -3,13 +3,13 @@
 import { t } from '../../i18n.js';
 import { h, ic, clear, openDialog, field, numInput, selectInput, switchInput, toast, hintBox } from '../dom.js';
 import { fmt, fmtNum } from '../../core/units.js';
-import { caseLabel } from '../results-data.js';
+import { caseLabel, DESIGN_COMPONENTS, isRcLayer } from '../results-data.js';
 import { lineForces } from '../../fem/index.js';
 import { surfaceLayout, rcSurfaceDetail } from '../../design/concrete.js';
 import { BAR_DIAS, meshArea } from '../../design/rebar.js';
 import { runDesign } from './analysis.js';
 import { chart } from '../chart.js';
-import { designMessage, checkName, layerName, slabSuggestion, beamSuggestion, meshText, barsText, stirrupText, POS_NAMES } from '../design-text.js';
+import { designMessage, messageLevel, withoutCodes, checkName, layerName, slabSuggestion, beamSuggestion, meshText, barsText, stirrupText, POS_NAMES } from '../design-text.js';
 
 const LAYERS = ['axb', 'ayb', 'axt', 'ayt'];
 const PROV_KEYS = ['xb', 'yb', 'xt', 'yt'];
@@ -34,12 +34,10 @@ function concreteTargets(st) {
 // re-run the designs that exist after parameter changes (results stay consistent with the model)
 async function refreshDesigns(app) {
   const r = app.store.results;
-  const had = { rc: !!r.rc, beams: !!r.rcBeams, cols: !!r.rcCols };
-  r.rc = r.rcBeams = r.rcCols = r.punching = null;
+  const runs = [...new Set(DESIGN_COMPONENTS.rc.filter((c) => r.design[c.source]).map((c) => c.run))];
+  for (const c of DESIGN_COMPONENTS.rc) delete r.design[c.source];
   if (!r.static) return;
-  if (had.rc) await runDesign(app, 'rc', { quiet: true });
-  if (had.beams) await runDesign(app, 'rcBeam', { quiet: true });
-  if (had.cols) await runDesign(app, 'rcCol', { quiet: true });
+  for (const run of runs) await runDesign(app, run, { quiet: true });
 }
 
 /* ---------------- reinforcement parameters ---------------- */
@@ -127,7 +125,7 @@ export function rcProvidedDialog(app) {
   const st = app.store, code = codeOf(st);
   const { doms, all } = concreteTargets(st);
   if (!doms.length) return toast(t('Keine Betonflächen ausgewählt bzw. im Modell.'), 'info');
-  const rc = st.results.rc;
+  const rc = st.results.design.rc;
   const sums = rc?.domains?.filter((s) => doms.some((d) => d.id === s.id)) || [];
   const req = LAYERS.map((_, j) => Math.max(0, ...sums.map((s) => s.max[j])));
   const minA = LAYERS.map((_, j) => Math.max(0, ...sums.map((s) => s.asMin[j])));
@@ -166,7 +164,7 @@ export function rcProvidedDialog(app) {
         for (const d of m.domains) if (ids.has(d.id)) { if (any) d.rcProv = JSON.parse(JSON.stringify(prov)); else delete d.rcProv; }
       }, { keepResults: true });
       await refreshDesigns(app);
-      if (st.results.rc && any) st.setResultView({ kind: 'rc', rcMode: 'miss', component: /^a[xy][bt]$/.test(st.resultView.component) ? st.resultView.component : 'axb' });
+      if (st.results.design.rc && any) st.setResultView({ kind: 'rc', rcMode: 'miss', component: isRcLayer(st.resultView.component) ? st.resultView.component : 'axb' });
       toast(any ? t('Vorhandene Bewehrung gespeichert – Anzeige „Fehlend“ zeigt nötige Zulagen.') : t('Vorhandene Bewehrung entfernt.'), 'ok', 4500);
     } }],
   });
@@ -215,9 +213,9 @@ const maxOf = (a) => Math.max(0, ...(a || []).filter(Number.isFinite));
 /* ---------------- RC beam detail ---------------- */
 export function rcBeamDetail(app, lineId) {
   const st = app.store, code = codeOf(st);
-  const r = (st.results.rcBeams || []).find((b) => b.line === lineId);
+  const r = (st.results.design.rcBeams || []).find((b) => b.line === lineId);
   if (!r) {
-    if (!st.results.rcBeams) return runDesign(app, 'rcBeam').then((ok) => ok && rcBeamDetail(app, lineId));
+    if (!st.results.design.rcBeams) return runDesign(app, 'rcBeam').then((ok) => ok && rcBeamDetail(app, lineId));
     return toast(t('Stab {id} ist kein bemessener Betonbalken (Material Beton, Querschnitt Rechteck oder T).', { id: lineId }), 'info');
   }
   const sug = beamSuggestion(r, code);
@@ -251,9 +249,9 @@ export function rcBeamDetail(app, lineId) {
       [t('Bügel'), `${fmt('reinf', maxOf(r.Asw))} → ${stirrupText(sug.stirrups)}`],
       ...(r.asMin ? [[t('As,min unten / oben'), `${fmt('reinfBeam', r.asMin.bot)} / ${fmt('reinfBeam', r.asMin.top)}`]] : []),
     ]));
-  const notes = h('div', { style: { marginTop: '10px' } }, ...(r.notes || []).map((n) => hintBox(designMessage(n), /exceeded|not possible|too small|Druckbewehrung|As > /i.test(n) ? 'warn' : '')));
+  const notes = h('div', { style: { marginTop: '10px' } }, ...(r.notes || []).map((n) => hintBox(designMessage(n), messageLevel(n) === 'warn' ? 'warn' : '')));
   const body = h('div', h('div.rc-detail', left, right), notes,
-    h('div.small.muted', { style: { marginTop: '6px' } }, t('Bemessung über alle Kombinationen der Bemessungsbasis: {b}. Bewehrungsvorschlag gilt für das Maximum über die ganze Stablänge (ohne Abstufung).', { b: st.results.designBasis?.basis || '' })));
+    h('div.small.muted', { style: { marginTop: '6px' } }, t('Bemessung über alle Kombinationen der Bemessungsbasis: {b}. Bewehrungsvorschlag gilt für das Maximum über die ganze Stablänge (ohne Abstufung).', { b: st.results.design.basis?.basis || '' })));
   openDialog({
     title: t('Stahlbetonbalken {id}', { id: r.line }), sub: (r.ok === false ? t('nicht erfüllt') : t('erfüllt')) + ' · ' + (code === 'SIA' ? 'SIA 262' : 'EN 1992-1-1'),
     iconName: 'beam', mod: 'lilac', size: 'xwide', body,
@@ -264,7 +262,7 @@ export function rcBeamDetail(app, lineId) {
 /* ---------------- steel / timber member detail ---------------- */
 export function memberDetail(app, kind, lineId) {
   const st = app.store;
-  const list = kind === 'timber' ? st.results.timber : st.results.steel;
+  const list = kind === 'timber' ? st.results.design.timber : st.results.design.steel;
   if (!list) return runDesign(app, kind).then((ok) => ok && memberDetail(app, kind, lineId));
   const r = list.find((x) => x.line === lineId);
   if (!r) return toast(t('Für Stab {id} gibt es keine Nachweise (Material/Querschnitt prüfen).', { id: lineId }), 'info');
@@ -319,11 +317,11 @@ function meshPoint(st, k) {
 
 export function rcProtocolDialog(app) {
   const st = app.store, R = st.results, code = codeOf(st);
-  if (!R.rc && !R.rcBeams && !R.rcCols) {
+  if (!R.design.rc && !R.design.rcBeams && !R.design.rcCols) {
     return runDesign(app, 'rc').then((ok) => ok && rcProtocolDialog(app));
   }
   const norm = code === 'SIA' ? 'SIA 262' : 'EN 1992-1-1';
-  const keys = R.rc?.keys || R.designBasis?.keys || [];
+  const keys = R.design.rc?.keys || R.design.basis?.keys || [];
   const show = (patch) => { d.close(); st.setResultView({ kind: 'rc', ...patch }); app.showSide('results'); };
   const body = h('div.rc-protocol');
   body.appendChild(h('div.hint-box', ic('info'), h('div.grow',
@@ -338,7 +336,7 @@ export function rcProtocolDialog(app) {
       h('li', t('Nicht nachgewiesen: Rissbreiten, Verformungen im gerissenen Zustand, Bemessung der Durchstanz- und Schubbewehrung, Verankerung.')))),
   ));
   // surfaces
-  for (const s of R.rc?.domains || []) {
+  for (const s of R.design.rc?.domains || []) {
     const mat = st.idx.materials.get(s.material);
     const L = s.layout;
     const card = h('div.side-section', h('div.side-section-title', ic('domain'), t('Fläche {id}', { id: s.id }), h('span.muted.small', ` · ${t({ plate: 'Platte', shell: 'Schale', membrane: 'Scheibe' }[s.type] || s.type)} · ${fmt('thick', s.t)} · ${mat?.name || ''}`), h('span.grow'),
@@ -374,7 +372,7 @@ export function rcProtocolDialog(app) {
     body.appendChild(card);
   }
   // punching
-  const P = R.punching?.items || [];
+  const P = R.design.punching?.items || [];
   if (P.length) {
     const card = h('div.side-section', h('div.side-section-title', ic('target'), t('Durchstanzen'), h('span.muted.small', ` · ${code === 'SIA' ? 'SIA 262 4.3.6' : 'EN 1992-1-1 6.4'}`), h('span.grow'),
       h('button.btn.sm', { onclick: () => show({ component: 'punch' }) }, ic('eye'), t('Anzeigen'))));
@@ -397,7 +395,7 @@ export function rcProtocolDialog(app) {
     body.appendChild(card);
   }
   // beams
-  const B = R.rcBeams || [];
+  const B = R.design.rcBeams || [];
   if (B.length) {
     const card = h('div.side-section', h('div.side-section-title', ic('beam'), t('Balken und Rippen')));
     const tbl = h('table.tbl', h('thead', h('tr', ...[t('Stab'), t('Querschnitt'), t('As unten'), t('As oben'), t('Bügel'), t('Ergebnis'), ''].map((x) => h('th', x)))));
@@ -418,7 +416,7 @@ export function rcProtocolDialog(app) {
     body.appendChild(card);
   }
   // columns
-  const Cs = R.rcCols || [];
+  const Cs = R.design.rcCols || [];
   if (Cs.length) {
     const card = h('div.side-section', h('div.side-section-title', ic('column'), t('Stützen'), h('span.muted.small', ` · ${code === 'SIA' ? t('Modellstütze, Nennkrümmung (Näherung zu SIA 262 4.3.7)') : 'EN 1992-1-1 5.8.8 / 5.8.9'}`)));
     const tbl = h('table.tbl', h('thead', h('tr', ...[t('Stab'), t('Querschnitt'), 'λy / λz', 'NEd', 'MEd,y / MEd,z', t('As erf.'), t('Vorschlag'), 'η', ''].map((x) => h('th', x)))));
@@ -438,10 +436,10 @@ export function rcProtocolDialog(app) {
     card.appendChild(h('div.small.muted', t('* schlank: Momente nach Theorie II. Ordnung (Nennkrümmung) berücksichtigt. Imperfektion ei = l0/400 je Richtung einzeln.')));
     body.appendChild(card);
   }
-  const warns = [...(R.rc?.warnings || []), ...(R.rcBeams?.warnings || []), ...(R.rcCols?.warnings || []), ...(R.punching?.warnings || [])].filter((w) => !/vEd > vRd,c/.test(w));
+  const warns = withoutCodes([...(R.design.rc?.warnings || []), ...(R.design.rcBeams?.warnings || []), ...(R.design.rcCols?.warnings || []), ...(R.design.punching?.warnings || [])], 'surf.shear');
   if (warns.length) body.appendChild(h('div.side-section', h('div.side-section-title', ic('alert'), t('Hinweise')), ...warns.slice(0, 12).map((w) => hintBox(designMessage(w), 'warn'))));
   const d = openDialog({
-    title: t('Bemessungsprotokoll Stahlbeton'), sub: `${norm} · ${R.designBasis?.basis || ''}`, iconName: 'fileText', mod: 'lilac', size: 'xwide', body,
+    title: t('Bemessungsprotokoll Stahlbeton'), sub: `${norm} · ${R.design.basis?.basis || ''}`, iconName: 'fileText', mod: 'lilac', size: 'xwide', body,
     buttons: [{ label: t('Bewehrungsparameter'), icon: 'concrete', onClick: () => rcParamsDialog(app) }, { label: t('Schliessen'), kind: 'primary' }],
   });
 }
@@ -463,7 +461,7 @@ export function nearestCorner(mesh, domainId, p) {
 
 export function rcPointDialog(app, e, c) {
   const st = app.store, R = st.results;
-  const det = rcSurfaceDetail(st.model, R.mesh, R.static, R.rc?.keys || R.designBasis?.keys, e, c, { code: st.model.settings.code });
+  const det = rcSurfaceDetail(st.model, R.mesh, R.static, R.design.rc?.keys || R.design.basis?.keys, e, c, { code: st.model.settings.code });
   if (!det) return toast(t('An dieser Stelle wurde nicht bemessen (kein Beton).'), 'info');
   const code = codeOf(st), L = det.layout;
   const where = meshPoint(st, e * 4 + c);
@@ -557,9 +555,9 @@ function columnSketch(r) {
 
 export function columnDetail(app, lineId) {
   const st = app.store, code = codeOf(st);
-  const r = (st.results.rcCols || []).find((c) => c.line === lineId);
+  const r = (st.results.design.rcCols || []).find((c) => c.line === lineId);
   if (!r) {
-    if (!st.results.rcCols) return runDesign(app, 'rcCol').then((ok) => ok && columnDetail(app, lineId));
+    if (!st.results.design.rcCols) return runDesign(app, 'rcCol').then((ok) => ok && columnDetail(app, lineId));
     return toast(t('Stab {id} ist keine bemessene Stahlbetonstütze.', { id: lineId }), 'info');
   }
   const g = r.governing || {};
@@ -589,8 +587,8 @@ export function columnDetail(app, lineId) {
       [t('Vorschlag'), r.bars ? `${r.bars.n} Ø${Math.round(r.bars.dia * 1000)} (${fmt('reinfBeam', r.bars.area)})` : '–'],
       [t('Ausnutzung η'), `${((r.eta || 0) * 100).toFixed(0)} %`],
     ]));
-  const named = (txt) => txt.replace(/\b(CO|LC|ENV):\w+/g, (k) => caseLabel(st, k)); // case keys → names
-  const notes = h('div', { style: { marginTop: '10px' } }, ...(r.notes || []).map((n) => hintBox(named(designMessage(n)), /exceed|not possible|too small|As,max/i.test(n) ? 'warn' : '')));
+  const caseName = (k, v) => (k === 'key' ? caseLabel(st, v) : null); // case keys → combination names
+  const notes = h('div', { style: { marginTop: '10px' } }, ...(r.notes || []).map((n) => hintBox(designMessage(n, caseName), messageLevel(n) === 'warn' ? 'warn' : '')));
   openDialog({
     title: t('Stahlbetonstütze {id}', { id: r.line }), sub: (r.ok === false || r.eta > 1 ? t('nicht erfüllt') : t('erfüllt')) + ' · ' + (code === 'SIA' ? 'SIA 262' : 'EN 1992-1-1'),
     iconName: 'column', mod: 'lilac', size: 'xwide', body: h('div', h('div.rc-detail', left, right), notes),

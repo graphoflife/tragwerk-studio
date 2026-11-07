@@ -63,6 +63,7 @@
 import { designCode, num, pos, fmt, designContext, collectLineForces, MEMBER_TYPES } from './common.js';
 import { tBeamSetup, tBeamForces } from './tbeam.js';
 import { isColumn } from './column.js';
+import { msg } from '../core/messages.js';
 
 export const FLAG_COMPRESSION_REINF = 1;
 export const FLAG_AS_MAX = 2;
@@ -280,7 +281,7 @@ function surfaceShear(P, L, as, prov) {
   return { vRd: shearResistanceNoStirrups(P, 1, dm, rhoL), dm, rhoL };
 }
 
-/** Prepared design data of one domain, or { skip: reason } (English, for warnings). */
+/** Prepared design data of one domain, or { skip: reason message }. */
 function domainSetup(ctx, dom, s0, code, opts) {
   const mat = ctx.materials.get(Number(s0.material ?? dom.material));
   if (!mat || mat.type !== 'concrete') return null;
@@ -289,9 +290,9 @@ function domainSetup(ctx, dom, s0, code, opts) {
   const t = pos(s0.thickness, pos(dom.thickness, NaN));
   const L = surfaceLayout(dom.rc, t);
   const P = concreteParams(mat, L.fyk, code, opts);
-  if (!P) return { skip: 'concrete material without fck – RC design skipped' };
-  if (!(t > 0)) return { skip: 'no thickness – RC design skipped' };
-  if (!(Math.min(L.d.yb, L.d.yt) > 0.2 * t)) return { skip: `thickness ${fmt(t, 3)} m too small for cover/dia – skipped` };
+  if (!P) return { skip: msg('r.noFck') };
+  if (!(t > 0)) return { skip: msg('r.noThickness') };
+  if (!(Math.min(L.d.yb, L.d.yt) > 0.2 * t)) return { skip: msg('r.thin', { t: fmt(t, 3) }) };
   return { mat, type, t, L, P, prov: dom.rcProv ? providedAreas(dom.rcProv) : null };
 }
 
@@ -343,7 +344,7 @@ export function designRCSurfaces(model, mesh, staticResults, caseKeys, opts = {}
       const dom = ctx.domains.get(domId) || {};
       const D = domainSetup(ctx, dom, shells[elems[0]], code, opts);
       if (!D) continue;
-      if (D.skip) { warnings.push(`Domain ${domId}: ${D.skip}`); continue; }
+      if (D.skip) { warnings.push(msg('skip.surface', { id: domId, reason: D.skip })); continue; }
       const { type, t, L, P, prov } = D;
       const asMinL = surfaceMin(P, L);
       const sum = {
@@ -388,13 +389,13 @@ export function designRCSurfaces(model, mesh, staticResults, caseKeys, opts = {}
         }
       }
       domains.push(sum);
-      if (sum.nComp) warnings.push(`Domain ${domId}: compression reinforcement required (x/d > ${P.xiLim}, ${P.ref.xi}) at ${sum.nComp} corner(s)`);
-      if (sum.nMax) warnings.push(`Domain ${domId}: As > As,max = 0.04·Ac at ${sum.nMax} corner(s)`);
-      if (sum.nFail) warnings.push(`Domain ${domId}: design not possible (section too small / missing data) at ${sum.nFail} corner(s)`);
-      if (sum.nShear) warnings.push(`Domain ${domId}: vEd > vRd,c at ${sum.nShear} corner(s) (max ratio ${fmt(sum.vMax, 2)}, ${P.ref.V}) – shear reinforcement required, not designed`);
+      if (sum.nComp) warnings.push(msg('surf.comp', { id: domId, xi: P.xiLim, ref: P.ref.xi, n: sum.nComp }));
+      if (sum.nMax) warnings.push(msg('surf.asMax', { id: domId, n: sum.nMax }));
+      if (sum.nFail) warnings.push(msg('surf.fail', { id: domId, n: sum.nFail }));
+      if (sum.nShear) warnings.push(msg('surf.shear', { id: domId, n: sum.nShear, r: fmt(sum.vMax, 2), ref: P.ref.V }));
     }
   } catch (e) {
-    warnings.push(`RC surface design aborted: ${e && e.message}`);
+    warnings.push(msg('aborted.rcSurface', { err: e && e.message }));
   }
   return result;
 }
@@ -457,29 +458,29 @@ export function designRCBeams(model, mesh, staticResults, caseKeys, opts = {}) {
         const r = designBeam(ctx, code, line, el, mat, opts);
         if (r) out.push(r);
       } catch (e) {
-        out.warnings.push(`Line ${line.id}: RC beam design failed (${e && e.message})`);
+        out.warnings.push(msg('failed.rcBeam', { id: line.id, err: e && e.message }));
       }
     }
   } catch (e) {
-    out.warnings.push(`RC beam design aborted: ${e && e.message}`);
+    out.warnings.push(msg('aborted.rcBeam', { err: e && e.message }));
   }
   return out;
 }
 
 function designBeam(ctx, code, line, el, mat, opts) {
-  const W = (msg) => { ctx.warnings.push(`Line ${line.id}: ${msg} – RC beam design skipped`); return null; };
+  const W = (reason) => { ctx.warnings.push(msg('skip.rcBeam', { id: line.id, reason })); return null; };
   const sec = ctx.sections.get(Number(el.section));
-  if (!sec) return W('no section');
+  if (!sec) return W(msg('r.noSection'));
   const dims = sec.dims || {};
   const rcIn = Object.assign({}, sec.rc || {}, (el.design && el.design.rc) || {}, opts.rc || {});
   const rc = rcDefaults(rcIn, { cover: 0.03, dia: 0.020, diaStirrup: 0.010, fyk: 500000, fywk: 0 });
   if (!(rc.fywk > 0)) rc.fywk = rc.fyk;
   const P = concreteParams(mat, rc.fyk, code, opts);
-  if (!P) return W('concrete material without fck');
+  if (!P) return W(msg('r.noFck'));
   const L = ctx.lineLength(line);
-  if (!(L > 0)) return W('zero length');
+  if (!(L > 0)) return W(msg('r.zeroLength'));
   const segs = ctx.segs.get(Number(line.id));
-  if (!segs || !segs.length) return W('no mesh beams');
+  if (!segs || !segs.length) return W(msg('r.noMesh'));
   let bw, bf = 0, hf = 0, h, shape = sec.shape, tb = null;
   if (sec.shape === 'RECT' && dims.h > 0 && dims.b > 0) {
     h = dims.h; bw = dims.b;
@@ -490,10 +491,10 @@ function designBeam(ctx, code, line, el, mat, opts) {
       else if (tb) { bw = tb.beff; h = Math.max(h, tb.hf); }
     }
   } else if (sec.shape === 'T' && dims.h > 0 && dims.b > 0 && dims.tw > 0 && dims.tf > 0) { h = dims.h; bw = dims.tw; bf = dims.b; hf = dims.tf; }
-  else return W(`section shape ${sec.shape} not supported (RECT/T only)`);
+  else return W(msg('r.shapeRectT', { s: sec.shape }));
   const d = h - rc.cover - rc.diaStirrup - rc.dia / 2;
   const d2 = rc.cover + rc.diaStirrup + rc.dia / 2;
-  if (!(d > 0.5 * h)) return W('cover/bar diameters too large for the section height');
+  if (!(d > 0.5 * h)) return W(msg('r.coverBeam'));
   const eccZ = ctx.mesh.beams?.[segs[0].i]?.ecc || 0; // eccentric member (mesher offset along local z)
   const z = 0.9 * d;
   const fywd = rc.fywk / pos(opts.gammaS, 1.15);
@@ -521,7 +522,7 @@ function designBeam(ctx, code, line, el, mat, opts) {
       AsBot = new Array(n).fill(0); AsTop = new Array(n).fill(0); Asw = new Array(n).fill(0);
       env = { MyMax: new Array(n).fill(-Infinity), MyMin: new Array(n).fill(Infinity), MyRibMax: new Array(n).fill(-Infinity), MyRibMin: new Array(n).fill(Infinity), V: new Array(n).fill(0) };
     }
-    if (n !== xs.length) { notes.push(`case ${key}: station count mismatch – ignored`); continue; }
+    if (n !== xs.length) { notes.push(msg('beam.caseMismatch', { key })); continue; }
     // Plattenbalken: add the slab share within the effective width
     const slab = tb ? tBeamForces(tb, ctx, ctx.cases[key], f.x) : null;
     const aB = new Array(n), aT = new Array(n), dF = new Array(n);
@@ -590,11 +591,11 @@ function designBeam(ctx, code, line, el, mat, opts) {
     }
   }
   if (!xs) {
-    notes.push('no result cases – nothing designed');
+    notes.push(msg('beam.noCases'));
     return { line: line.id, x: [], AsBot: [], AsTop: [], Asw: [], ok: true, notes, code, b: bw, h, d };
   }
-  if (eccZ) notes.push(`eccentric member: axis ${fmt(eccZ, 3)} m from the line (local z)`);
-  if (tb) notes.push(`T-beam: beff = ${fmt(tb.beff, 2)} m (${tb.sides.map((sd) => fmt(sd.beffI, 2)).join(' + ')} + bw), hf = ${fmt(tb.hf, 3)} m, l0 = ${fmt(tb.l0, 2)} m – slab forces within beff added (EN 1992-1-1 5.3.2.1)`);
+  if (eccZ) notes.push(msg('beam.ecc', { e: fmt(eccZ, 3) }));
+  if (tb) notes.push(msg('beam.tBeam', { beff: fmt(tb.beff, 2), parts: tb.sides.map((sd) => fmt(sd.beffI, 2)).join(' + '), hf: fmt(tb.hf, 3), l0: fmt(tb.l0, 2) }));
   // minimum / maximum reinforcement
   if (opts.minReinf !== false) {
     const minB = asMin(P, bw, h, d), minT = asMin(P, bf > 0 ? bf : bw, h, d);
@@ -608,15 +609,15 @@ function designBeam(ctx, code, line, el, mat, opts) {
     if (!Number.isFinite(AsBot[j]) || !Number.isFinite(AsTop[j])) { ok = false; asMaxHit = true; }
     if (AsBot[j] + AsTop[j] > 0.04 * Ac) { ok = false; asMaxHit = true; }
   }
-  if (compAt !== null) notes.push(`compression reinforcement required (x/d > ${P.xiLim}, ${P.ref.xi}) e.g. at x=${fmt(compAt, 2)} m`);
-  if (failAt !== null) notes.push(`bending design not possible at x=${fmt(failAt, 2)} m (section too small)`);
-  if (asMaxHit) notes.push('As > As,max = 0.04·Ac (EN 1992-1-1 9.2.1.1(3)) – section too small');
-  if (vmaxFail) notes.push(`${SIA ? 'VRd,c (concrete compression field, kc = 0.55)' : 'VRd,max'} exceeded: VEd=${fmt(vmaxFail.V)} kN > ${fmt(vmaxFail.VR)} kN at x=${fmt(vmaxFail.x, 2)} m (${P.ref.V})`);
-  if (MzSig) notes.push('significant Mz – weak-axis bending not designed');
-  if (TSig) notes.push('torsion not designed');
+  if (compAt !== null) notes.push(msg('beam.comp', { xi: P.xiLim, ref: P.ref.xi, x: fmt(compAt, 2) }));
+  if (failAt !== null) notes.push(msg('beam.bendFail', { x: fmt(failAt, 2) }));
+  if (asMaxHit) notes.push(msg('beam.asMax'));
+  if (vmaxFail) notes.push(msg(SIA ? 'beam.strutSIA' : 'beam.strutEC', { V: fmt(vmaxFail.V), VR: fmt(vmaxFail.VR), x: fmt(vmaxFail.x, 2), ref: P.ref.V }));
+  if (MzSig) notes.push(msg('beam.mz'));
+  if (TSig) notes.push(msg('beam.torsion'));
   notes.push(SIA
-    ? `shear: fixed compression field cot α = ${fmt(Math.min(cotMax, Math.max(1, cotFixed ?? 1)), 2)}, z = 0.9d (${P.ref.V})`
-    : `shear: variable strut, cot θ ${Number.isFinite(cotUsedMin) ? `≥ ${fmt(cotUsedMin, 2)}` : `= ${fmt(cotFixed ?? cotMax, 2)}`} (≤ ${fmt(cotMax, 2)}), z = 0.9d (${P.ref.V})`);
+    ? msg('beam.shearSIA', { c: fmt(Math.min(cotMax, Math.max(1, cotFixed ?? 1)), 2), ref: P.ref.V })
+    : msg('beam.shearEC', { c: Number.isFinite(cotUsedMin) ? `≥ ${fmt(cotUsedMin, 2)}` : `= ${fmt(cotFixed ?? cotMax, 2)}`, max: fmt(cotMax, 2), ref: P.ref.V }));
   return {
     line: line.id, x: xs, AsBot, AsTop, Asw, ok, notes, code, b: bw, h, d,
     section: { shape, bw, bf, hf, h, d, d2, cover: rc.cover, dia: rc.dia, diaStirrup: rc.diaStirrup, fyk: rc.fyk },

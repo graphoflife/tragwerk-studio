@@ -3,7 +3,7 @@ import { t } from '../../i18n.js';
 import { h, ic, clear, openDialog, checkInput, toast, download } from '../dom.js';
 import { P, lineLength, polygonArea, modelStats } from '../../core/model.js';
 import { fmt, fmtNum, toDisplay, unitLabel } from '../../core/units.js';
-import { caseLabel, getCase, caseSummary } from '../results-data.js';
+import { caseLabel, getCase, caseSummary, DESIGN_FAMILIES, hasDesign } from '../results-data.js';
 import { lineForces } from '../../fem/index.js';
 import { describeLoad } from './loads.js';
 import { designCaseKeys } from './analysis.js';
@@ -160,7 +160,7 @@ function buildHtml(app, on) {
     parts.push(`<p class="meta">${t('Lastsituation')}: ${esc(caseLabel(st, R.buckling.basis))}</p>`);
     parts.push(table([t('Form'), 'αcr'], R.buckling.modes.map((md, i) => [i + 1, md.lambda.toFixed(3)])));
   }
-  if (on.design && (R.steel || R.timber || R.rc || R.rcBeams || R.rcCols)) {
+  if (on.design && DESIGN_FAMILIES.some((f) => hasDesign(R, f))) {
     parts.push(H2(t('Bemessung')));
     parts.push(`<p class="meta">${t('Norm')}: ${code} · ${t('Basis')}: ${esc(designCaseKeys(st).basis)}</p>`);
     const util = (list, title) => {
@@ -169,32 +169,32 @@ function buildHtml(app, on) {
         [...list].sort((a, b) => b.eta - a.eta).slice(0, 300).map((r) => [r.line, ((r.eta ?? 0) * 100).toFixed(1), r.governing ? checkName(r.governing.check) : '', caseLabel(st, r.governing?.caseKey), r.checks?.[r.governing?.check]?.detail || ''])));
     };
     const cd = m.settings.code === 'SIA' ? 'SIA' : 'EC';
-    if (R.steel) util(R.steel, t('Stahlnachweise'));
-    if (R.timber) util(R.timber, t('Holznachweise'));
-    if (R.rc?.domains?.length) {
+    if (R.design.steel) util(R.design.steel, t('Stahlnachweise'));
+    if (R.design.timber) util(R.design.timber, t('Holznachweise'));
+    if (R.design.rc?.domains?.length) {
       parts.push(`<p><b>${t('Stahlbeton Flächen – maximale erforderliche Bewehrung (inkl. Mindestbewehrung, Wood-Armer)')}</b></p>`);
       parts.push(table([t('Fläche'), t('Lage'), 'd [mm]', `as,min [${u('reinf')}]`, `${t('erf. max')} [${u('reinf')}]`, t('Vorschlag'), t('massgebend')],
-        R.rc.domains.flatMap((d) => ['axb', 'ayb', 'axt', 'ayt'].map((lay, j) => [d.id, `${lay} (${layerName(lay)})`, Math.round(d.layout.d[lay.slice(1)] * 1000), num('reinf', d.asMin[j]), num('reinf', d.max[j]),
-          d.max[j] > 0 ? meshText(slabSuggestion(d.max[j], lay, d.layout, cd)) : '–', d.maxCase[j] >= 0 ? caseLabel(st, R.rc.keys[d.maxCase[j]]) : '']))));
-      const sh = R.rc.domains.map((d) => [d.id, (d.vMax * 100).toFixed(0), d.vMax > 1 ? t('Schubbewehrung erforderlich') : t('ohne Schubbewehrung ok')]);
+        R.design.rc.domains.flatMap((d) => ['axb', 'ayb', 'axt', 'ayt'].map((lay, j) => [d.id, `${lay} (${layerName(lay)})`, Math.round(d.layout.d[lay.slice(1)] * 1000), num('reinf', d.asMin[j]), num('reinf', d.max[j]),
+          d.max[j] > 0 ? meshText(slabSuggestion(d.max[j], lay, d.layout, cd)) : '–', d.maxCase[j] >= 0 ? caseLabel(st, R.design.rc.keys[d.maxCase[j]]) : '']))));
+      const sh = R.design.rc.domains.map((d) => [d.id, (d.vMax * 100).toFixed(0), d.vMax > 1 ? t('Schubbewehrung erforderlich') : t('ohne Schubbewehrung ok')]);
       parts.push(table([t('Fläche'), 'max. vEd/vRd,c [%]', t('Ergebnis')], sh));
     }
-    if (R.punching?.items?.length) {
+    if (R.design.punching?.items?.length) {
       parts.push(`<p><b>${t('Durchstanzen')}</b></p>`);
       parts.push(table([t('Knoten'), t('Lage'), 'd [mm]', `VEd [${u('force')}]`, 'η [%]', t('Ergebnis')],
-        R.punching.items.map((it) => [it.node, t(POS_NAMES[it.type]), Math.round(it.d * 1000), num('force', it.VEd), (it.eta * 100).toFixed(0),
+        R.design.punching.items.map((it) => [it.node, t(POS_NAMES[it.type]), Math.round(it.d * 1000), num('force', it.VEd), (it.eta * 100).toFixed(0),
           it.fail ? t('Platte verstärken / Stütze vergrössern') : it.needsReinf ? t('Durchstanzbewehrung erforderlich') : t('ohne Bewehrung erfüllt')])));
     }
-    if (R.rcCols?.length) {
+    if (R.design.rcCols?.length) {
       parts.push(`<p><b>${t('Stahlbetonstützen')}</b></p>`);
       parts.push(table([t('Stab'), t('Querschnitt'), 'λy / λz', `NEd [${u('force')}]`, `MEd,y / MEd,z [${u('moment')}]`, `As [${u('reinfBeam')}]`, t('Vorschlag'), 'η [%]'],
-        R.rcCols.map((c) => [c.line, c.shape === 'CIRC' ? `Ø${Math.round(c.D * 1000)}` : `${Math.round(c.b * 1000)}×${Math.round(c.h * 1000)}`, `${Math.round(c.lambda?.y || 0)} / ${Math.round(c.lambda?.z || 0)}`,
+        R.design.rcCols.map((c) => [c.line, c.shape === 'CIRC' ? `Ø${Math.round(c.D * 1000)}` : `${Math.round(c.b * 1000)}×${Math.round(c.h * 1000)}`, `${Math.round(c.lambda?.y || 0)} / ${Math.round(c.lambda?.z || 0)}`,
           num('force', c.governing?.NEd ?? 0), `${num('moment', c.governing?.MEdy ?? 0)} / ${num('moment', c.governing?.MEdz ?? 0)}`, num('reinfBeam', c.As), c.bars ? `${c.bars.n} Ø${Math.round(c.bars.dia * 1000)}` : '–', ((c.eta || 0) * 100).toFixed(0)])));
     }
-    if (R.rcBeams?.length) {
+    if (R.design.rcBeams?.length) {
       parts.push(`<p><b>${t('Stahlbeton Balken')}</b></p>`);
       parts.push(table([t('Stab'), t('Querschnitt'), `As unten [${u('reinfBeam')}]`, `As oben [${u('reinfBeam')}]`, `asw [${u('reinf')}]`, t('Vorschlag'), 'OK'],
-        R.rcBeams.map((b) => {
+        R.design.rcBeams.map((b) => {
           const sg = beamSuggestion(b, cd);
           return [b.line, b.tBeam ? `${t('Plattenbalken')} beff = ${fmtNum(b.tBeam.beff, 3)} m` : `${Math.round(b.b * 1000)}×${Math.round(b.h * 1000)}`, num('reinfBeam', Math.max(0, ...b.AsBot)), num('reinfBeam', Math.max(0, ...b.AsTop)), num('reinf', Math.max(0, ...b.Asw)),
             `${barsText(sg.bot)} / ${barsText(sg.top)} · ${stirrupText(sg.stirrups)}`, b.ok === false ? '✗' : '✓'];

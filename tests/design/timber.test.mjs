@@ -148,7 +148,7 @@ test('robustness', () => {
   const m1 = lineModel({ L: 3, sec: { shape: 'RECT', dims: { h: 0.2, b: 0.1 } }, mat: { type: 'timber' } });
   const o1 = checkTimberMembers(m1, mesh, { cases: { 'LC:1': c } }, ['LC:1']);
   assert.equal(o1.length, 0);
-  assert.ok(o1.warnings[0].includes('timber properties'));
+  assert.ok(String(o1.warnings[0]).includes('timber properties'));
   const m2 = lineModel({ L: 3, sec: { shape: 'CIRC', dims: { d: 0.2 } }, mat: C24 });
   const [r2] = checkTimberMembers(m2, mesh, { cases: { 'LC:1': lineCase(mesh, 3, { My: () => 2, N: () => -20, T: () => 0.5 }) } }, ['LC:1']);
   assert.ok(Number.isFinite(r2.eta) && r2.eta > 0 && !r2.checks.LTB);

@@ -15,7 +15,7 @@ import { importDXF, exportDXF } from '../io/dxf.js';
 import { welcomeDialog } from './dialogs/help.js';
 import { runStatic } from './dialogs/analysis.js';
 import { DEFAULT_PSI } from './dialogs/manage.js';
-import { defaultCaseKey, getCase, caseLabel, componentDef } from './results-data.js';
+import { defaultCaseKey, getCase, caseLabel, componentDef, DESIGN_COMPONENTS, DESIGN_FAMILIES, designComp, hasDesign, RC_LAYERS } from './results-data.js';
 import { memberDetail, rcBeamDetail, rcPointDialog, nearestCorner, columnDetail } from './dialogs/rc.js';
 import { checkName, POS_NAMES } from './design-text.js';
 import { renderParts } from './parts-ui.js';
@@ -177,25 +177,25 @@ export class App {
       case 'static': return !!r.static;
       case 'vibration': return !!r.modal;
       case 'buckling': return !!r.buckling;
-      case 'rc': return !!(r.rc || r.rcBeams || r.rcCols);
-      case 'steel': return !!r.steel;
-      case 'timber': return !!r.timber;
-      default: return false;
+      default: return DESIGN_FAMILIES.includes(id) && hasDesign(r, id);
     }
   }
 
   setTab(id) {
     if (id === 'design') id = 'rc'; // old module id
     store.tab = id;
-    const autoRes = { static: 'static', vibration: 'modal', buckling: 'buckling', steel: 'steel', timber: 'timber' }[id];
-    const r = store.results;
-    if (autoRes && r[autoRes] && store.resultView.kind !== autoRes) this.showResults(autoRes);
-    else if (id === 'rc' && (r.rc || r.rcBeams || r.rcCols) && store.resultView.kind !== 'rc') this.showResults('rc', r.rc ? undefined : r.rcBeams ? 'AsBot' : 'colEta');
-    else if (['rc', 'steel', 'timber'].includes(id) && store.resultView.kind && store.resultView.kind !== (autoRes || 'rc')) this.hideResults();
+    const autoRes = { static: 'static', vibration: 'modal', buckling: 'buckling' }[id];
+    const r = store.results, kind = store.resultView.kind;
+    if (autoRes && r[autoRes] && kind !== autoRes) this.showResults(autoRes);
+    else if (DESIGN_FAMILIES.includes(id)) {
+      // design module: show its results (first component that has data), otherwise hide other results
+      if (hasDesign(r, id)) { if (kind !== id) this.showResults(id, DESIGN_COMPONENTS[id].find((c) => r.design[c.source]).key); }
+      else if (kind) this.hideResults();
+    }
     if (['geometry', 'elements', 'loads', 'mesh'].includes(id) && store.resultView.kind) this.hideResults();
     this.renderTabs();
     this.renderRibbon();
-    if (['static', 'vibration', 'buckling', 'rc', 'steel', 'timber'].includes(id)) this.showSide('results');
+    if (['static', 'vibration', 'buckling', ...DESIGN_FAMILIES].includes(id)) this.showSide('results');
     else if (this.sideTab === 'results') this.showSide('props');
   }
 
@@ -377,8 +377,8 @@ export class App {
 
   async showResults(kind, component) {
     const r = store.results;
-    const have = { static: r.static, modal: r.modal, buckling: r.buckling, steel: r.steel, rc: r.rc || r.rcBeams || r.rcCols, timber: r.timber, spectrum: r.spectrum };
-    if (!have[kind]) {
+    const have = DESIGN_FAMILIES.includes(kind) ? hasDesign(r, kind) : { static: r.static, modal: r.modal, buckling: r.buckling, spectrum: r.spectrum }[kind];
+    if (!have) {
       if (kind === 'static') {
         const ok = await runStatic(this, false);
         if (!ok) return;
@@ -407,18 +407,18 @@ export class App {
     const rows = [];
     const pct = (v) => `${((v ?? 0) * 100).toFixed(0)} %`;
     if ((rv.kind === 'steel' || rv.kind === 'timber') && hit.kind === 'line') {
-      const r = (rv.kind === 'steel' ? R.steel : R.timber)?.find((x) => x.line === hit.id);
+      const r = (rv.kind === 'steel' ? R.design.steel : R.design.timber)?.find((x) => x.line === hit.id);
       if (!r) { el.style.display = 'none'; return; }
       rows.push([t('Stab {id}', { id: hit.id }), pct(r.eta)]);
       for (const [k, c] of Object.entries(r.checks || {}).sort((a, b) => (b[1].eta ?? 0) - (a[1].eta ?? 0)).slice(0, 5)) rows.push([checkName(k), pct(c.eta)]);
       rows.push([t('Doppelklick: Details'), '']);
-    } else if (rv.kind === 'rc' && hit.kind === 'line' && ['colEta', 'colAs'].includes(rv.component) && R.rcCols) {
-      const c = R.rcCols.find((x) => x.line === hit.id);
+    } else if (rv.kind === 'rc' && hit.kind === 'line' && designComp(rv.component)?.source === 'rcCols' && R.design.rcCols) {
+      const c = R.design.rcCols.find((x) => x.line === hit.id);
       if (!c) { el.style.display = 'none'; return; }
       rows.push([t('Stütze {id}', { id: hit.id }), pct(c.eta)], ['NEd', fmt('force', c.governing?.NEd ?? 0)], ['MEd,y / MEd,z', `${fmt('moment', c.governing?.MEdy ?? 0, { unit: false })} / ${fmt('moment', c.governing?.MEdz ?? 0)}`],
         [t('As erforderlich'), fmt('reinfBeam', c.As)], [t('Vorschlag'), c.bars ? `${c.bars.n} Ø${Math.round(c.bars.dia * 1000)}` : '–'], [t('Doppelklick: Details'), '']);
-    } else if (rv.kind === 'rc' && hit.kind === 'line' && R.rcBeams) {
-      const r = R.rcBeams.find((b) => b.line === hit.id);
+    } else if (rv.kind === 'rc' && hit.kind === 'line' && R.design.rcBeams) {
+      const r = R.design.rcBeams.find((b) => b.line === hit.id);
       if (!r?.x?.length) { el.style.display = 'none'; return; }
       const L = r.x[r.x.length - 1] || 1, x = (hit.t ?? 0.5) * L;
       let k = 0;
@@ -427,21 +427,21 @@ export class App {
       if (r.env) rows.push(['My max / min', `${fmt('moment', r.env.MyMax[k], { unit: false })} / ${fmt('moment', r.env.MyMin[k])}`]);
       rows.push([t('As unten'), fmt('reinfBeam', r.AsBot[k])], [t('As oben'), fmt('reinfBeam', r.AsTop[k])], ['asw', fmt('reinf', r.Asw[k])], [t('Doppelklick: Details'), '']);
     } else if (rv.kind === 'rc' && rv.component === 'punch' && hit.kind === 'node') {
-      const it = R.punching?.items.find((i) => i.node === hit.id);
+      const it = R.design.punching?.items.find((i) => i.node === hit.id);
       if (!it) { el.style.display = 'none'; return; }
       rows.push([t('Knoten {id}', { id: hit.id }), t(POS_NAMES[it.type])], ['VEd', fmt('force', it.VEd)], ['d', fmt('dim', it.d)], ['η', pct(it.eta)],
         [it.fail ? t('verstärken') : it.needsReinf ? t('Durchstanzbewehrung erforderlich') : t('ohne Bewehrung erfüllt'), '']);
-    } else if (rv.kind === 'rc' && R.rc && (hit.kind === 'domain' || hit.kind === 'node') && hit.p) {
+    } else if (rv.kind === 'rc' && R.design.rc && (hit.kind === 'domain' || hit.kind === 'node') && hit.p) {
       const dom = hit.kind === 'domain' ? hit.id : mesh.shells.find((s) => s.nodes.includes(mesh.modelNodeToMesh?.[hit.id]))?.domain;
       const cn = dom != null ? nearestCorner(mesh, dom, hit.p) : null;
       if (!cn) { el.style.display = 'none'; return; }
-      const k = cn.e * 4 + cn.c, A = R.rc.asCorner;
+      const k = cn.e * 4 + cn.c, A = R.design.rc.asCorner;
       rows.push([t('Fläche {id}', { id: dom }), '']);
       ['axb', 'ayb', 'axt', 'ayt'].forEach((n, j) => rows.push([n, fmt('reinf', A[k * 4 + j])]));
-      const vr = R.rc.vRatio[k];
+      const vr = R.design.rc.vRatio[k];
       rows.push(['vEd/vRd,c', vr < 0 ? t('Durchstanzbereich') : pct(vr)]);
-      const gi = R.rc.gov[k * 4 + (/^a[xy][bt]$/.test(rv.component) ? ['axb', 'ayb', 'axt', 'ayt'].indexOf(rv.component) : 0)];
-      if (gi >= 0) rows.push([t('massgebend'), caseLabel(store, R.rc.keys[gi])]);
+      const gi = R.design.rc.gov[k * 4 + Math.max(0, RC_LAYERS.indexOf(rv.component))];
+      if (gi >= 0) rows.push([t('massgebend'), caseLabel(store, R.design.rc.keys[gi])]);
       rows.push([t('Doppelklick: Berechnung'), '']);
     } else { el.style.display = 'none'; return; }
     clear(el).appendChild(h('div.kv', { style: { minWidth: '180px' } }, rows.flatMap(([a, b], i) => (i === 0 ? [h('b', a), h('span.muted', b)] : [h('span', a), h('span', b)]))));
@@ -453,9 +453,9 @@ export class App {
     const rv = store.resultView, R = store.results;
     if (!hit || !R.mesh) return false;
     if ((rv.kind === 'steel' || rv.kind === 'timber') && hit.kind === 'line') { memberDetail(this, rv.kind, hit.id); return true; }
-    if (rv.kind === 'rc' && hit.kind === 'line' && R.rcCols?.some((c) => c.line === hit.id) && (['colEta', 'colAs'].includes(rv.component) || !R.rcBeams?.some((b) => b.line === hit.id))) { columnDetail(this, hit.id); return true; }
-    if (rv.kind === 'rc' && hit.kind === 'line' && R.rcBeams?.some((b) => b.line === hit.id)) { rcBeamDetail(this, hit.id); return true; }
-    if (rv.kind === 'rc' && R.rc && hit.kind === 'domain' && hit.p) {
+    if (rv.kind === 'rc' && hit.kind === 'line' && R.design.rcCols?.some((c) => c.line === hit.id) && (designComp(rv.component)?.source === 'rcCols' || !R.design.rcBeams?.some((b) => b.line === hit.id))) { columnDetail(this, hit.id); return true; }
+    if (rv.kind === 'rc' && hit.kind === 'line' && R.design.rcBeams?.some((b) => b.line === hit.id)) { rcBeamDetail(this, hit.id); return true; }
+    if (rv.kind === 'rc' && R.design.rc && hit.kind === 'domain' && hit.p) {
       const cn = nearestCorner(R.mesh, hit.id, hit.p);
       if (cn) { rcPointDialog(this, cn.e, cn.c); return true; }
     }
@@ -552,7 +552,7 @@ export class App {
   afterSectionLine(name) {
     const R = store.results, rv = store.resultView;
     if (!R.static || !R.mesh?.shells.length) { toast(t('Schnittlinie {n} erstellt – nach der Berechnung zeigt sie den Ergebnisverlauf.', { n: name }), 'ok', 4000); return; }
-    if (rv.kind === 'rc' && R.rc) { if (!/^a[xy][bt]$|vRatio/.test(rv.component)) store.setResultView({ component: 'axb' }); }
+    if (rv.kind === 'rc' && R.design.rc) { if (designComp(rv.component)?.source !== 'rc') store.setResultView({ component: 'axb' }); }
     else {
       const surf = ['shell', 'nodal'].includes(componentDef(rv.component)?.kind);
       this.showResults('static', rv.kind === 'static' && surf ? undefined : 'mx');
@@ -608,7 +608,7 @@ export class App {
   showHoverInfo(hit) {
     const el = this.infoEl, rv = store.resultView, mesh = store.results.mesh;
     const hide = () => { el.style.display = 'none'; };
-    if (hit && mesh && ['rc', 'steel', 'timber'].includes(rv.kind)) return this.showDesignInfo(hit);
+    if (hit && mesh && DESIGN_FAMILIES.includes(rv.kind)) return this.showDesignInfo(hit);
     if (!hit || !mesh || !(rv.kind === 'static' || rv.kind === 'spectrum')) return hide();
     const cs = getCase(store, rv.caseKey);
     if (!cs) return hide();
@@ -696,8 +696,8 @@ export class App {
         if (p) [g.gammaSup, g.gammaInf, g.psi0, g.psi1, g.psi2] = p;
       }
     }, { keepResults: true });
-    for (const k of ['steel', 'rc', 'rcBeams', 'rcCols', 'punching', 'timber']) store.results[k] = null;
-    if (['steel', 'rc', 'timber'].includes(store.resultView.kind)) store.setResultView({ kind: null });
+    store.results.design = {};
+    if (DESIGN_FAMILIES.includes(store.resultView.kind)) store.setResultView({ kind: null });
     toast((code === 'SIA' ? t('Normenfamilie: SIA 260–265 (Schweiz)') : t('Normenfamilie: Eurocode EN 1990–1998')) + ' · ' + t('γ/ψ-Beiwerte der Lastgruppen angepasst. Kombinationen ggf. neu erzeugen.'), 'ok', 5000);
     this.renderAll();
   }

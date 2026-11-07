@@ -49,14 +49,14 @@ export function sectionSource(st) {
     }
     return null;
   }
-  if (rv.kind === 'rc' && R.rc?.asCorner) {
+  if (rv.kind === 'rc' && R.design.rc?.asCorner) {
     const comp = DESIGN_COMPONENTS.rc.find((c) => c.key === rv.component);
-    if (comp?.kind === 'shear') return { f: (e, k) => { const v = R.rc.vRatio[e * 4 + k]; return v < 0 ? null : v; }, q: 'percent', name: 'vEd/vRd,c', integralQ: null, down: false };
+    if (comp?.kind === 'shear') return { f: (e, k) => { const v = R.design.rc.vRatio[e * 4 + k]; return v < 0 ? null : v; }, q: 'percent', name: 'vEd/vRd,c', integralQ: null, down: false };
     if (comp?.kind === 'rc') {
       const prov = new Map(st.model.domains.map((d) => [d.id, d.rcProv ? providedAreas(d.rcProv) : null]));
       const mode = rv.rcMode === 'prov' || rv.rcMode === 'miss' ? rv.rcMode : 'req';
       const f = (e, k) => {
-        const req = R.rc.asCorner[(e * 4 + k) * 4 + comp.c], pv = prov.get(mesh.shells[e].domain);
+        const req = R.design.rc.asCorner[(e * 4 + k) * 4 + comp.c], pv = prov.get(mesh.shells[e].domain);
         const have = pv ? pv[comp.c] : 0;
         return mode === 'req' ? req : mode === 'prov' ? have : Math.max(0, req - have);
       };
@@ -556,7 +556,7 @@ function buildMode(vp, group, mesh) {
 /* ---------------- design: utilisation ---------------- */
 function buildUtil(vp, group, mesh) {
   const st = vp.store, rv = st.resultView;
-  const list = rv.kind === 'steel' ? st.results.steel : st.results.timber;
+  const list = rv.kind === 'steel' ? st.results.design.steel : st.results.design.timber;
   if (!list) return { title: t('Keine Ergebnisse'), empty: true };
   const { idx } = st;
   // component 'eta' = governing check, otherwise one check (AxisVM: separate result components per check)
@@ -613,7 +613,7 @@ function buildRC(vp, group, mesh) {
   if (comp.kind === 'rcbeam') return buildRCBeams(vp, group, mesh, comp, cols, code);
   if (comp.kind === 'rccol') return buildRCColumns(vp, group, mesh, comp, cols);
   if (comp.kind === 'punch') return buildPunching(vp, group, mesh);
-  const rc = st.results.rc;
+  const rc = st.results.design.rc;
   if (!rc?.asCorner || !mesh.shells.length) return { title: t(comp.label), empty: true, msg: t('Keine Bemessungsergebnisse für Flächen – „Flächen bemessen“ ausführen.') };
   if (comp.kind === 'shear') {
     const util = paletteColors('utilization');
@@ -676,7 +676,7 @@ function buildRC(vp, group, mesh) {
 
 function buildRCBeams(vp, group, mesh, comp, cols, code) {
   const st = vp.store, rv = st.resultView;
-  const list = st.results.rcBeams || [];
+  const list = st.results.design.rcBeams || [];
   if (!list.length) return { title: t(comp.label), empty: true, msg: t('Keine Betonbalken bemessen – „Balken bemessen“ ausführen.') };
   let mx = 0;
   const hiddenL = st.view.hidden.lines;
@@ -713,7 +713,7 @@ function buildRCBeams(vp, group, mesh, comp, cols, code) {
 
 function buildRCColumns(vp, group, mesh, comp, cols) {
   const st = vp.store, rv = st.resultView;
-  const list = st.results.rcCols || [];
+  const list = st.results.design.rcCols || [];
   if (!list.length) return { title: t(comp.label), empty: true, msg: t('Keine Stützen bemessen – „Stützen bemessen“ ausführen.') };
   const util = comp.key === 'colEta';
   const pal = util ? paletteColors('utilization') : cols;
@@ -744,7 +744,7 @@ function buildRCColumns(vp, group, mesh, comp, cols) {
 
 function buildPunching(vp, group, mesh) {
   const st = vp.store;
-  const P = st.results.punching;
+  const P = st.results.design.punching;
   ghostMesh(vp, group, mesh);
   if (!P?.items?.length) return { title: t('Durchstanzen'), empty: true, msg: t('Keine Stützen oder Punktlager unter Betonplatten gefunden.') };
   const util = paletteColors('utilization');

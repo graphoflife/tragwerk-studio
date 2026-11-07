@@ -3,9 +3,11 @@ import { t } from '../../i18n.js';
 import { h, ic, clear, openDialog, field, numInput, selectInput, segmented, checkInput, toast, hintBox, switchInput } from '../dom.js';
 import { validateModel } from '../../core/model.js';
 import { buildMesh } from '../../mesh/mesher.js';
+import { expandLoadPanels } from '../../fem/panels.js';
+import { designMessage } from '../design-text.js';
 import { runFem, cancelFem } from '../../core/analysis.js';
 import { fmt } from '../../core/units.js';
-import { defaultCaseKey, componentDef } from '../results-data.js';
+import { defaultCaseKey, componentDef, componentForRun } from '../results-data.js';
 import { checkSteelMembers } from '../../design/steel.js';
 import { designRCSurfaces, designRCBeams } from '../../design/concrete.js';
 import { checkPunching } from '../../design/punching.js';
@@ -13,11 +15,19 @@ import { designRCColumns } from '../../design/column.js';
 import { checkTimberMembers } from '../../design/timber.js';
 
 /* ---------------- mesh ---------------- */
+// The model handed to the mesher and the FE solver: load panels resolved into line loads. Cached with
+// the results (cleared together with the mesh).
+function femModel(st) {
+  if (!st.results.fem) st.results.fem = expandLoadPanels(st.model);
+  return st.results.fem.model;
+}
+const femWarnings = (st) => (st.results.fem?.warnings || []).map(designMessage);
+
 export function ensureMesh(app) {
   const st = app.store;
   if (st.results.mesh) return st.results.mesh;
   const t0 = performance.now();
-  const mesh = buildMesh(st.model, { meshSize: st.model.settings.meshSize, beamDivisions: st.model.settings.beamDivisions });
+  const mesh = buildMesh(femModel(st), { meshSize: st.model.settings.meshSize, beamDivisions: st.model.settings.beamDivisions });
   mesh.ms = performance.now() - t0;
   st.results.mesh = mesh;
   if (mesh.warnings?.length) toast(t('Netz: {w}', { w: mesh.warnings.slice(0, 2).join(' · ') }), 'warn', 5000);
@@ -27,7 +37,7 @@ export function ensureMesh(app) {
 export function meshGenerate(app, { quiet } = {}) {
   const st = app.store;
   if (!st.model.nodes.length) return toast(t('Das Modell ist leer.'), 'info');
-  st.results.mesh = null;
+  st.results.mesh = st.results.fem = null;
   let mesh;
   try { mesh = ensureMesh(app); } catch (e) {
     console.error(e);
@@ -139,23 +149,23 @@ export async function runStatic(app, nonlinear, opts) {
   const pr = progress(app, nonlinear ? t('Nichtlineare Berechnung') : t('Lineare Statik'));
   const t0 = performance.now();
   try {
-    const res = await runFem('static', st.model, mesh, { nonlinear: !!nonlinear, ...(opts || {}) }, (p, m) => pr.set(p, m));
+    const res = await runFem('static', femModel(st), mesh, { nonlinear: !!nonlinear, ...(opts || {}) }, (p, m) => pr.set(p, m));
     pr.done();
     if (res.error) { femError(app, res.error); return false; }
     res.ms = performance.now() - t0;
     res.nonlinear = !!nonlinear;
     st.results.static = res;
     st.results.staticOpts = { nonlinear: !!nonlinear, ...(opts || {}) };
-    st.results.steel = st.results.rc = st.results.rcBeams = st.results.rcCols = st.results.punching = st.results.timber = null;
+    st.results.design = {}; // design results belong to the previous static results
     const keep = st.resultView.caseKey && res.cases[st.resultView.caseKey];
     st.resultView.caseKey = keep ? st.resultView.caseKey : defaultCaseKey(st);
     st.resultView.kind = 'static';
-    if (!st.resultView.component || ['eta', 'axb', 'ayb', 'axt', 'ayt', 'vRatio', 'punch', 'AsBot', 'AsTop', 'Asw', 'colEta', 'colAs'].includes(st.resultView.component) || !componentDef(st.resultView.component)) st.resultView.component = 'deformed';
+    if (!componentDef(st.resultView.component)) st.resultView.component = 'deformed'; // e.g. a design component
     st.emit('results');
     st.emit('resultView');
     app.setStatus(t('Statik: {n} Fälle in {ms} ms · {d} Freiheitsgrade', { n: Object.keys(res.cases).length, ms: Math.round(res.ms), d: res.stats?.dofs ?? '–' }));
     toast(t('Berechnung abgeschlossen ({ms} ms).', { ms: Math.round(res.ms) }), 'ok');
-    res.warnings = (res.warnings || []).map(femMessage);
+    res.warnings = [...femWarnings(st), ...(res.warnings || []).map(femMessage)];
     const important = res.warnings.filter((w) => !/automatisch gehalten/.test(w));
     if (important.length) toast(important[0], 'warn', 5000);
     if (!['static', 'buckling', 'rc', 'steel', 'timber'].includes(st.tab)) app.setTab('static');
@@ -208,7 +218,7 @@ export async function runModal(app, s) {
   try { mesh = ensureMesh(app); } catch (e) { toast(t('Netzgenerierung fehlgeschlagen: {m}', { m: e.message }), 'err'); return false; }
   const pr = progress(app, t('Eigenschwingungsanalyse'));
   try {
-    const res = await runFem('modal', st.model, mesh, { nModes: s.nModes, massCase: s.massCase ? +s.massCase : null, massFactor: s.massFactor, selfWeightMass: s.selfWeightMass }, (p, m) => pr.set(p, m));
+    const res = await runFem('modal', femModel(st), mesh, { nModes: s.nModes, massCase: s.massCase ? +s.massCase : null, massFactor: s.massFactor, selfWeightMass: s.selfWeightMass }, (p, m) => pr.set(p, m));
     pr.done();
     if (res.error) { femError(app, res.error); return false; }
     res.warnings = (res.warnings || []).map(femMessage);
@@ -255,7 +265,7 @@ async function runBuckling(app, s) {
   try { mesh = ensureMesh(app); } catch (e) { toast(t('Netzgenerierung fehlgeschlagen: {m}', { m: e.message }), 'err'); return false; }
   const pr = progress(app, t('Knickanalyse'));
   try {
-    const res = await runFem('buckling', st.model, mesh, { factors, nModes: s.nModes }, (pp, m) => pr.set(pp, m));
+    const res = await runFem('buckling', femModel(st), mesh, { factors, nModes: s.nModes }, (pp, m) => pr.set(pp, m));
     pr.done();
     if (res.error) { femError(app, res.error); return false; }
     res.basis = s.key;
@@ -318,7 +328,7 @@ async function runSpectrum(app, s) {
     for (const [i, dir] of dirs.entries()) {
       pr.set((i / dirs.length) * 100, t('Richtung {d}', { d: dir }));
       const opt = { code: st.model.settings.code, dir, ag: s.ag, zone: st.model.settings.code === 'SIA' ? s.zone : undefined, soil: s.soil, q: s.q, importance: s.importance, rule: s.rule, damping: s.damping, modal: st.results.modal };
-      cases['SP:' + dir] = await runFem('spectrum', st.model, mesh, opt);
+      cases['SP:' + dir] = await runFem('spectrum', femModel(st), mesh, opt);
     }
     pr.done();
     st.results.spectrum = { cases, opts: s };
@@ -366,41 +376,41 @@ export async function runDesign(app, kind, { quiet = false } = {}) {
   const { keys, basis, warn } = designCaseKeys(st);
   const opts = { code: st.model.settings.code };
   const mesh = st.results.mesh;
-  st.results.designBasis = { keys, basis, warn };
+  st.results.design.basis = { keys, basis, warn };
   const say = (msg, type, ms) => { if (!quiet) toast(msg, type, ms); };
   try {
     if (kind === 'steel') {
-      st.results.steel = checkSteelMembers(st.model, mesh, st.results.static, keys, opts);
+      st.results.design.steel = checkSteelMembers(st.model, mesh, st.results.static, keys, opts);
       st.setResultView({ kind: 'steel', component: 'eta' });
-      const n = st.results.steel.length, f = st.results.steel.filter((r) => r.eta > 1).length;
+      const n = st.results.design.steel.length, f = st.results.design.steel.filter((r) => r.eta > 1).length;
       say(n ? t('Stahlbemessung: {n} Stäbe, {f} nicht erfüllt · Basis: {b}', { n, f, b: basis }) : t('Keine Stahlstäbe gefunden.'), n ? (f ? 'warn' : 'ok') : 'info', 5000);
     } else if (kind === 'timber') {
-      st.results.timber = checkTimberMembers(st.model, mesh, st.results.static, keys, opts);
+      st.results.design.timber = checkTimberMembers(st.model, mesh, st.results.static, keys, opts);
       st.setResultView({ kind: 'timber', component: 'eta' });
-      const n = st.results.timber.length, f = st.results.timber.filter((r) => r.eta > 1).length;
+      const n = st.results.design.timber.length, f = st.results.design.timber.filter((r) => r.eta > 1).length;
       say(n ? t('Holzbemessung: {n} Stäbe, {f} nicht erfüllt · Basis: {b}', { n, f, b: basis }) : t('Keine Holzstäbe gefunden.'), n ? (f ? 'warn' : 'ok') : 'info', 5000);
     } else if (kind === 'rc') {
       // punching zones (geometry only) → surfaces (slab shear outside these zones) → punching with ρl
       const pre = checkPunching(st.model, mesh, st.results.static, keys, opts);
-      st.results.rc = designRCSurfaces(st.model, mesh, st.results.static, keys, { ...opts, shearExclude: pre.zones, shearExcludeSegs: beamSegments(st) });
-      st.results.punching = checkPunching(st.model, mesh, st.results.static, keys, { ...opts, rc: st.results.rc });
-      const doms = st.results.rc.domains;
+      st.results.design.rc = designRCSurfaces(st.model, mesh, st.results.static, keys, { ...opts, shearExclude: pre.zones, shearExcludeSegs: beamSegments(st) });
+      st.results.design.punching = checkPunching(st.model, mesh, st.results.static, keys, { ...opts, rc: st.results.design.rc });
+      const doms = st.results.design.rc.domains;
       if (!doms.length) say(t('Keine Stahlbetonflächen gefunden (Material Beton erforderlich).'), 'info');
       else {
         const rv = st.resultView;
-        st.setResultView({ kind: 'rc', component: /^a[xy][bt]$|vRatio|punch/.test(rv.component) && rv.kind === 'rc' ? rv.component : 'axb', rcMode: rv.rcMode || 'req' });
-        const pf = st.results.punching.items.filter((i) => i.eta > 1).length;
-        say(t('{n} Flächen bemessen · Basis: {b}', { n: doms.length, b: basis }) + (st.results.punching.items.length ? ' · ' + t('Durchstanzen: {n} Stellen, {f} mit η > 1', { n: st.results.punching.items.length, f: pf }) : ''), pf ? 'warn' : 'ok', 5000);
+        st.setResultView({ kind: 'rc', component: componentForRun('rc', rv.kind === 'rc' ? rv.component : null), rcMode: rv.rcMode || 'req' });
+        const pf = st.results.design.punching.items.filter((i) => i.eta > 1).length;
+        say(t('{n} Flächen bemessen · Basis: {b}', { n: doms.length, b: basis }) + (st.results.design.punching.items.length ? ' · ' + t('Durchstanzen: {n} Stellen, {f} mit η > 1', { n: st.results.design.punching.items.length, f: pf }) : ''), pf ? 'warn' : 'ok', 5000);
       }
     } else if (kind === 'rcCol') {
-      st.results.rcCols = designRCColumns(st.model, mesh, st.results.static, keys, opts);
-      st.setResultView({ kind: 'rc', component: ['colEta', 'colAs'].includes(st.resultView.component) ? st.resultView.component : 'colEta' });
-      const n = st.results.rcCols.length, f = st.results.rcCols.filter((c) => c.ok === false || c.eta > 1).length;
+      st.results.design.rcCols = designRCColumns(st.model, mesh, st.results.static, keys, opts);
+      st.setResultView({ kind: 'rc', component: componentForRun('rcCol', st.resultView.component) });
+      const n = st.results.design.rcCols.length, f = st.results.design.rcCols.filter((c) => c.ok === false || c.eta > 1).length;
       say(n ? t('{n} Stahlbetonstützen bemessen, {f} nicht erfüllt · Basis: {b}', { n, f, b: basis }) : t('Keine Stahlbetonstützen gefunden (Balken aus Beton, vertikal, Querschnitt Rechteck oder Kreis).'), n ? (f ? 'warn' : 'ok') : 'info', 5000);
     } else if (kind === 'rcBeam') {
-      st.results.rcBeams = designRCBeams(st.model, mesh, st.results.static, keys, opts);
-      st.setResultView({ kind: 'rc', component: ['AsBot', 'AsTop', 'Asw'].includes(st.resultView.component) ? st.resultView.component : 'AsBot' });
-      const n = st.results.rcBeams.length, tb = st.results.rcBeams.filter((b) => b.tBeam).length;
+      st.results.design.rcBeams = designRCBeams(st.model, mesh, st.results.static, keys, opts);
+      st.setResultView({ kind: 'rc', component: componentForRun('rcBeam', st.resultView.component) });
+      const n = st.results.design.rcBeams.length, tb = st.results.design.rcBeams.filter((b) => b.tBeam).length;
       say(n ? t('{n} Betonbalken bemessen ({t} als Plattenbalken) · Basis: {b}', { n, t: tb, b: basis }) : t('Keine Betonbalken gefunden (Material Beton, Querschnitt Rechteck oder T).'), n ? 'ok' : 'info', 5000);
     }
     if (warn) say(t('Achtung: keine Kombinationen vorhanden – bemessen wird mit charakteristischen Lastfällen.'), 'warn', 6000);

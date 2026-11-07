@@ -30,7 +30,7 @@
 //    element.divisions > opts.beamDivisions > settings.beamDivisions > 4.
 //  * Shell elements of one domain share the same ex/ey/ez array objects.
 
-import { sub, dot, norm, lineAxes, domainAxes, pointInPolygon2D, distPointSeg2D, segSegIntersect2D } from './geom.js';
+import { sub, dot, norm, lineAxes, domainAxes, domainFrame, pointInPolygon2D, distPointSeg2D, segSegIntersect2D } from './geom.js';
 import { triangulateDomain } from './cdt.js';
 
 const nowMs = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
@@ -94,26 +94,12 @@ export function memberOffset(model, el, pa, pb, ax) {
   if (e !== 'auto') return null;
   const sec = ((model && model.sections) || []).find((x) => x.id === el.section);
   const h = sec?.dims?.h > 0 ? sec.dims.h : (sec?.A > 0 && sec?.Iy > 0 ? Math.sqrt(12 * sec.Iy / sec.A) : 0);
-  const nodes = new Map(((model && model.nodes) || []).map((n) => [n.id, [n.x, n.y, n.z]]));
-  const mid = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2, (pa[2] + pb[2]) / 2];
-  const L = Math.hypot(pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]);
+  const nodes = new Map(((model && model.nodes) || []).map((n) => [n.id, n]));
   let t = 0, n = null;
   for (const d of (model && model.domains) || []) {
-    if (d.type === 'panel' || d.type === 'membrane' || !(d.thickness > 0)) continue;
-    const pts = d.nodes.map((id) => nodes.get(id)).filter(Boolean);
-    if (pts.length < 3) continue;
-    const dax = domainAxes(pts);
-    if (!dax) continue;
-    const tol = 1e-3 + 1e-3 * L;
-    if (Math.abs(dot(sub(pa, pts[0]), dax.ez)) > tol || Math.abs(dot(sub(pb, pts[0]), dax.ez)) > tol) continue;
-    const to2 = (p) => { const v = sub(p, pts[0]); return [dot(v, dax.ex), dot(v, dax.ey)]; };
-    const poly = pts.map(to2), m2 = to2(mid);
-    let on = pointInPolygon2D(m2[0], m2[1], poly);
-    for (let i = 0; !on && i < poly.length; i++) {
-      const q = poly[(i + 1) % poly.length];
-      if (distPointSeg2D(m2[0], m2[1], poly[i][0], poly[i][1], q[0], q[1]) <= tol) on = true;
-    }
-    if (on && d.thickness > t) { t = d.thickness; n = dax.ez; }
+    if (d.type === 'membrane' || !(d.thickness > 0)) continue; // plates and shells carry the member
+    const F = domainFrame(nodes, d);
+    if (F && F.containsSegment(pa, pb) && d.thickness > t) { t = d.thickness; n = F.ez; }
   }
   if (!n || !(h > t)) return null;
   const off = (h - t) / 2;
@@ -240,7 +226,7 @@ export function buildMesh(model, opts = {}) {
   const defDiv = Math.max(1, Math.round(posNum(opts.beamDivisions) ?? posNum(settings.beamDivisions) ?? 4));
   const mNodes = (model && model.nodes) || [];
   const mLines = (model && model.lines) || [];
-  const mDoms = ((model && model.domains) || []).filter((d) => d.type !== 'panel'); // load panels carry no elements
+  const mDoms = (model && model.domains) || []; // load panels are resolved before meshing (fem/panels.js expandLoadPanels)
 
   // ---------------------------------------------------------------- tolerances
   let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];

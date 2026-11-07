@@ -1,5 +1,6 @@
 // Model data structure (see SPEC.md §2) and editing operations.
 import { t } from '../i18n.js';
+import { domainAxes as geomDomainAxes } from '../mesh/geom.js';
 
 export const SUPPORT_PRESETS = {
   fixed: ['F', 'F', 'F', 'F', 'F', 'F'],
@@ -95,16 +96,9 @@ export function polygonNormal(pts) {
   return [nx, ny, nz];
 }
 
+// local axes of a domain (SPEC §2.2) – one implementation for model, mesher and design (mesh/geom.js)
 export function domainAxes(pts) {
-  let n = V.norm(polygonNormal(pts));
-  const e = 1e-6;
-  if (n[2] < -e || (Math.abs(n[2]) <= e && (n[1] < -e || (Math.abs(n[1]) <= e && n[0] < 0)))) n = V.mul(n, -1);
-  const proj = (g) => V.sub(g, V.mul(n, V.dot(g, n)));
-  let ex = proj([1, 0, 0]);
-  if (V.len(ex) < 1e-6) ex = proj([0, 1, 0]);
-  ex = V.norm(ex);
-  const ey = V.cross(n, ex);
-  return { ex, ey, ez: n };
+  return geomDomainAxes(pts) || { ex: [1, 0, 0], ey: [0, 1, 0], ez: [0, 0, 1], origin: pts[0] };
 }
 
 export function polygonArea(pts) { return V.len(polygonNormal(pts)) / 2; }

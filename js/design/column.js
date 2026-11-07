@@ -99,6 +99,7 @@
 import { designCode, num, pos, fmt, designContext, collectLineForces, capEta, momentDiagram, toMap } from './common.js';
 import { concreteParams } from './concrete.js';
 import { BAR_DIAS, barArea } from './rebar.js';
+import { msg } from '../core/messages.js';
 
 const ES = 200e6;                    // kN/m², reinforcing steel
 const SQRT12 = Math.sqrt(12);
@@ -306,15 +307,15 @@ function classify(ctx, line) {
     if (!(L > 0) || Math.abs(dz) / L < COS30 - 1e-9) return null;
   }
   const mat = ctx.materials.get(Number(el.material));
-  if (!mat || mat.type !== 'concrete') return forced ? { skip: mat ? `material type '${mat.type}' is not concrete` : 'no material' } : null;
+  if (!mat || mat.type !== 'concrete') return forced ? { skip: mat ? msg('r.notConcrete', { type: mat.type }) : msg('r.noMaterial') } : null;
   const sec = ctx.sections.get(Number(el.section));
-  if (!sec) return { skip: 'no section' };
+  if (!sec) return { skip: msg('r.noSection') };
   const d = sec.dims || {};
   let geo;
   if (sec.shape === 'RECT' && pos(d.h, 0) > 0 && pos(d.b, 0) > 0) geo = { shape: 'RECT', b: d.b, h: d.h, D: null };
   else if (sec.shape === 'CIRC' && pos(d.d, 0) > 0) geo = { shape: 'CIRC', b: d.d, h: d.d, D: d.d };
-  else return { skip: `section shape ${sec.shape} not supported (RECT/CIRC only)` };
-  if (!(pos(mat.fck, 0) > 0)) return { skip: 'concrete material without fck' };
+  else return { skip: msg('r.shapeRectCirc', { s: sec.shape }) };
+  if (!(pos(mat.fck, 0) > 0)) return { skip: msg('r.noFck') };
   return { el, mat, sec, geo };
 }
 
@@ -483,22 +484,22 @@ export function designRCColumns(model, mesh, staticResults, caseKeys, opts = {})
       let cls;
       try { cls = classify(ctx, line); } catch (e) { cls = null; }
       if (!cls) continue;
-      if (cls.skip) { out.warnings.push(`Line ${line.id}: ${cls.skip} – RC column design skipped`); continue; }
+      if (cls.skip) { out.warnings.push(msg('skip.rcCol', { id: line.id, reason: cls.skip })); continue; }
       try {
         const r = designColumn(ctx, code, line, cls, opts);
         if (r) out.push(r);
       } catch (e) {
-        out.warnings.push(`Line ${line.id}: RC column design failed (${e && e.message}) – RC column design skipped`);
+        out.warnings.push(msg('failed.rcCol', { id: line.id, err: e && e.message }));
       }
     }
   } catch (e) {
-    out.warnings.push(`RC column design aborted: ${e && e.message}`);
+    out.warnings.push(msg('aborted.rcCol', { err: e && e.message }));
   }
   return out;
 }
 
 function designColumn(ctx, code, line, cls, opts) {
-  const W = (msg) => { ctx.warnings.push(`Line ${line.id}: ${msg} – RC column design skipped`); return null; };
+  const W = (reason) => { ctx.warnings.push(msg('skip.rcCol', { id: line.id, reason })); return null; };
   const { el, mat, sec, geo } = cls;
   const rcIn = {};
   for (const src of [sec.rc, el.design && el.design.rc, opts.rc]) {
@@ -509,14 +510,14 @@ function designColumn(ctx, code, line, cls, opts) {
     fyk: pos(rcIn.fyk, 500000), phiEf: Math.max(0, num(rcIn.phiEf, 0)),
   };
   const P = concreteParams(mat, rc.fyk, code, opts);
-  if (!P) return W('concrete material without fck');
+  if (!P) return W(msg('r.noFck'));
   const L = ctx.lineLength(line);
-  if (!(L > 0)) return W('zero length');
+  if (!(L > 0)) return W(msg('r.zeroLength'));
   const segs = ctx.segs.get(Number(line.id));
-  if (!segs || !segs.length) return W('no mesh beams');
+  if (!segs || !segs.length) return W(msg('r.noMesh'));
   const g = { shape: geo.shape, b: geo.b, h: geo.h, D: geo.D, cover: rc.cover, diaStirrup: rc.diaStirrup, dia: rc.dia };
   const s0 = columnSection(g, 1e-4);
-  if (!s0) return W('cover/bar diameters too large for the section');
+  if (!s0) return W(msg('r.coverCol'));
   const SIA = code === 'SIA';
   const circ = geo.shape === 'CIRC';
   const Ac = s0.Ac;
@@ -535,7 +536,7 @@ function designColumn(ctx, code, line, cls, opts) {
     for (const v of f.N) { if (v < Nmin) Nmin = v; if (v > Nmax) Nmax = v; }
     cases.push({ key, NEd: Nmin < 0 ? Nmin : Nmax, y: axisData(f.x, f.My), z: axisData(f.x, f.Mz) });
   }
-  if (!cases.length) notes.push('no result cases – minimum reinforcement only');
+  if (!cases.length) notes.push(msg('col.noCases'));
   const Dd = { P, ec2: epsC2(P), cases, L, l0, lambda, K: { y: Ky, z: Kz }, H: { y: geo.h, z: geo.b }, phiEf: rc.phiEf, circ };
 
   // minimum / maximum reinforcement
@@ -607,37 +608,33 @@ function designColumn(ctx, code, line, cls, opts) {
   const cm2 = (v) => fmt(v * 1e4, 2);
   for (const k of AXES) {
     const lam = fmt(lambda[k], 1), K = k === 'y' ? Ky : Kz;
-    if (!Number.isFinite(lambdaLim[k])) notes.push(`λ${k} = ${lam}: no compression – 2nd-order effects not relevant`);
-    else if (slender[k]) notes.push(`λ${k} = ${lam} > λlim = ${fmt(lambdaLim[k], 1)}: slender – 2nd-order moments (nominal curvature, ${ref} 5.8.8)`);
-    else notes.push(`λ${k} = ${lam} ≤ λlim = ${fmt(lambdaLim[k], 1)}: not slender – 2nd-order effects neglected (${ref} 5.8.3.1)`);
-    if (K > 1 + 1e-9) notes.push(`K${k} = ${fmt(K, 2)} > 1: sway member – C = 0.7, MEd = M0,max + M2 (conservative)`);
+    if (!Number.isFinite(lambdaLim[k])) notes.push(msg('col.noCompression', { k, lam }));
+    else if (slender[k]) notes.push(msg('col.slender', { k, lam, lim: fmt(lambdaLim[k], 1), ref }));
+    else notes.push(msg('col.stocky', { k, lam, lim: fmt(lambdaLim[k], 1), ref }));
+    if (K > 1 + 1e-9) notes.push(msg('col.sway', { k, K: fmt(K, 2) }));
   }
-  notes.push(`imperfection ei = l0/400 (${fmt(l0.y / 400 * 1000, 1)} / ${fmt(l0.z / 400 * 1000, 1)} mm, ${ref} 5.2(7)) and minimum eccentricity e0 = max(h/30, 20 mm) (6.1(4)), applied in one direction at a time (5.8.9(2))`);
-  notes.push(rc.phiEf > 0
-    ? `φef = ${fmt(rc.phiEf, 2)}: A = ${fmt(1 / (1 + 0.2 * rc.phiEf), 3)} (5.8.3.1), Kφ = 1 + β·φef (5.8.8.3(4))`
-    : 'φef = 0: creep not considered (set design.rc.phiEf; 5.8.4)');
+  notes.push(msg('col.imperfection', { y: fmt(l0.y / 400 * 1000, 1), z: fmt(l0.z / 400 * 1000, 1), ref }));
+  notes.push(rc.phiEf > 0 ? msg('col.creep', { phi: fmt(rc.phiEf, 2), A: fmt(1 / (1 + 0.2 * rc.phiEf), 3) }) : msg('col.noCreep'));
   if (gv) {
     notes.push(circ
-      ? `governing ${gv.caseKey} (imperfection in ${gv.imp}): resultant MEd = ${fmt(Math.hypot(gv.MEdy, gv.MEdz), 1)} kNm vs MRd = ${fmt(gv.MRdy, 1)} kNm at NEd = ${fmt(gv.NEd, 1)} kN → η = ${fmt(gv.eta, 3)}`
-      : `governing ${gv.caseKey} (imperfection in ${gv.imp}): biaxial (MEdz/MRdz)^a + (MEdy/MRdy)^a, a = ${fmt(gv.a, 2)} (${ref} 5.8.9(4)); NEd = ${fmt(gv.NEd, 1)} kN, MEdy = ${fmt(gv.MEdy, 1)}/${fmt(gv.MRdy, 1)}, MEdz = ${fmt(gv.MEdz, 1)}/${fmt(gv.MRdz, 1)} kNm → η = ${fmt(gv.eta, 3)}`);
+      ? msg('col.govCirc', { key: gv.caseKey, imp: gv.imp, M: fmt(Math.hypot(gv.MEdy, gv.MEdz), 1), MR: fmt(gv.MRdy, 1), N: fmt(gv.NEd, 1), eta: fmt(gv.eta, 3) })
+      : msg('col.govBiax', { key: gv.caseKey, imp: gv.imp, a: fmt(gv.a, 2), ref, N: fmt(gv.NEd, 1), My: fmt(gv.MEdy, 1), MRy: fmt(gv.MRdy, 1), Mz: fmt(gv.MEdz, 1), MRz: fmt(gv.MRdz, 1), eta: fmt(gv.eta, 3) }));
   }
-  if (gv && (gv.imp === 'y' ? gv.e0y : gv.e0z)) notes.push(`minimum eccentricity e0 = ${fmt(Math.max(Dd.H[gv.imp] / 30, 0.02) * 1000, 1)} mm governs MEd${gv.imp} (${ref} 6.1(4))`);
-  if (ev.tension) notes.push(`${ev.tension} case(s) with tension: designed for N + M without imperfection / 2nd-order effects`);
+  if (gv && (gv.imp === 'y' ? gv.e0y : gv.e0z)) notes.push(msg('col.e0', { e0: fmt(Math.max(Dd.H[gv.imp] / 30, 0.02) * 1000, 1), k: gv.imp, ref }));
+  if (ev.tension) notes.push(msg('col.tension', { n: ev.tension }));
   if (As <= AsMin * (1 + 1e-9)) {
-    notes.push(SIA
-      ? `As,min = 0.6 %·Ac = ${cm2(AsMin)} cm² governs (SIA 262 5.5.4 – verify)`
-      : `As,min = max(0.10·NEd/fyd, 0.002·Ac) = ${cm2(AsMin)} cm² governs (EN 1992-1-1 9.5.2(2))`);
+    notes.push(msg(SIA ? 'col.asMinSIA' : 'col.asMinEC', { As: cm2(AsMin) }));
   }
   let ok = !insufficient && !barsShort && ev.eta <= 1 + 1e-9;
-  if (insufficient) notes.push(`η > 1 even with As = ${fmt(AS_UPPER * 100, 0)} %·Ac – section too small`);
-  if (As > AsMax * (1 + 1e-9)) { ok = false; notes.push(`As,req = ${cm2(As)} cm² > As,max = 0.04·Ac = ${cm2(AsMax)} cm² (EN 1992-1-1 9.5.2(3)) – section too small`); }
-  else if (chosen.As > AsMax * (1 + 1e-9)) { ok = false; notes.push(`provided ${chosen.n} Ø${fmt(chosen.dia * 1000, 0)} = ${cm2(chosen.As)} cm² > As,max = 0.04·Ac (EN 1992-1-1 9.5.2(3))`); }
-  if (barsShort && !insufficient) notes.push(`no bar diameter ≤ Ø${fmt(chosen.dia * 1000, 0)} satisfies η ≤ 1 with the ${chosen.n}-bar pattern`);
-  if (chosen.extra > 0) notes.push(`denser bar pattern (${chosen.n} bars) – the ${S_MAX * 1000} mm pattern is not sufficient within As,max`);
-  if (chosen.spacing - chosen.dia < Math.max(chosen.dia, 0.02) - 1e-9) notes.push(`clear bar spacing ${fmt((chosen.spacing - chosen.dia) * 1000, 0)} mm < max(Ø, 20 mm) (EN 1992-1-1 8.2(2))`);
-  if (ev.beyond) notes.push(`|NEd| exceeds the axial resistance in ${ev.beyond} case(s)`);
-  notes.push('shear and links not designed (links: EN 1992-1-1 9.5.3)');
-  if (SIA) notes.push('SIA 262 4.3.7 (second-order effects) approximated by the EN 1992-1-1 5.8.8 nominal-curvature method with SIA material values – verify');
+  if (insufficient) notes.push(msg('col.insufficient', { pct: fmt(AS_UPPER * 100, 0) }));
+  if (As > AsMax * (1 + 1e-9)) { ok = false; notes.push(msg('col.asMax', { As: cm2(As), AsMax: cm2(AsMax) })); }
+  else if (chosen.As > AsMax * (1 + 1e-9)) { ok = false; notes.push(msg('col.provMax', { n: chosen.n, dia: fmt(chosen.dia * 1000, 0), As: cm2(chosen.As) })); }
+  if (barsShort && !insufficient) notes.push(msg('col.barsShort', { dia: fmt(chosen.dia * 1000, 0), n: chosen.n }));
+  if (chosen.extra > 0) notes.push(msg('col.dense', { n: chosen.n, s: S_MAX * 1000 }));
+  if (chosen.spacing - chosen.dia < Math.max(chosen.dia, 0.02) - 1e-9) notes.push(msg('col.spacing', { s: fmt((chosen.spacing - chosen.dia) * 1000, 0) }));
+  if (ev.beyond) notes.push(msg('col.beyond', { n: ev.beyond }));
+  notes.push(msg('col.noShear'));
+  if (SIA) notes.push(msg('col.sia'));
 
   return {
     line: line.id, shape: geo.shape, b: geo.b, h: geo.h, D: geo.D,

@@ -2,7 +2,8 @@
 // (snaps, X/Y/Z constraints with projection, reference point, typed coordinates).
 import { t } from '../i18n.js';
 import { h, toast } from './dom.js';
-import { addNode, addLine, addDomain, V, P, defaultLineElement, transformSelection, rotatePoint, centroid, domainAxes } from '../core/model.js';
+import { addNode, addLine, addDomain, V, P, defaultLineElement, transformSelection, rotatePoint, centroid } from '../core/model.js';
+import { domainFrame } from '../mesh/geom.js';
 import { PLANES } from './viewport.js';
 import { fmt } from '../core/units.js';
 import { PointInput, POINT_KEYS_HINT } from './pointinput.js';
@@ -367,18 +368,7 @@ class SectionTool extends DrawBase {
 function domainAt(model, idx, p) {
   for (const d of model.domains) {
     if (d.type === 'panel') continue;
-    const pts = d.nodes.map((id) => idx.nodes.get(id)).filter(Boolean).map(P);
-    if (pts.length < 3) continue;
-    const ax = domainAxes(pts);
-    if (Math.abs(V.dot(V.sub(p, pts[0]), ax.ez)) > 0.01 + 0.5 * (d.thickness || 0)) continue;
-    const to2 = (q) => { const v = V.sub(q, pts[0]); return [V.dot(v, ax.ex), V.dot(v, ax.ey)]; };
-    const poly = pts.map(to2), q = to2(p);
-    let inside = false;
-    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-      const [xi, yi] = poly[i], [xj, yj] = poly[j];
-      if ((yi > q[1]) !== (yj > q[1]) && q[0] < ((xj - xi) * (q[1] - yi)) / (yj - yi) + xi) inside = !inside;
-    }
-    if (inside) return d.id;
+    if (domainFrame(idx.nodes, d)?.contains(p, { plane: 0.01 + 0.5 * (d.thickness || 0) })) return d.id;
   }
   return null;
 }

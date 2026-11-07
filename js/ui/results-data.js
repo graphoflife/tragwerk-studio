@@ -38,23 +38,36 @@ export const COMPONENTS = [
 ];
 
 export const UTIL_CHECKS = ['N', 'Vz', 'Vy', 'My', 'Mz', 'M+N', 'FB-y', 'FB-z', 'LTB', 'Interaction', 'T'];
+// Design result components. source = key in results.design, run = runDesign kind that produces it.
 export const DESIGN_COMPONENTS = {
-  steel: [{ key: 'eta', label: 'Ausnutzung η', q: 'percent', kind: 'util' }],
-  timber: [{ key: 'eta', label: 'Ausnutzung η', q: 'percent', kind: 'util' }],
+  steel: [{ key: 'eta', label: 'Ausnutzung η', q: 'percent', kind: 'util', source: 'steel', run: 'steel' }],
+  timber: [{ key: 'eta', label: 'Ausnutzung η', q: 'percent', kind: 'util', source: 'timber', run: 'timber' }],
   rc: [
-    { key: 'axb', label: 'axb (x unten)', q: 'reinf', kind: 'rc', c: 0 },
-    { key: 'ayb', label: 'ayb (y unten)', q: 'reinf', kind: 'rc', c: 1 },
-    { key: 'axt', label: 'axt (x oben)', q: 'reinf', kind: 'rc', c: 2 },
-    { key: 'ayt', label: 'ayt (y oben)', q: 'reinf', kind: 'rc', c: 3 },
-    { key: 'vRatio', label: 'Querkraft vEd/vRd,c', q: 'percent', kind: 'shear' },
-    { key: 'punch', label: 'Durchstanzen', q: 'percent', kind: 'punch' },
-    { key: 'AsBot', label: 'Balken As unten', q: 'reinfBeam', kind: 'rcbeam' },
-    { key: 'AsTop', label: 'Balken As oben', q: 'reinfBeam', kind: 'rcbeam' },
-    { key: 'Asw', label: 'Bügel asw', q: 'reinf', kind: 'rcbeam' },
-    { key: 'colEta', label: 'Stützen Ausnutzung η', q: 'percent', kind: 'rccol' },
-    { key: 'colAs', label: 'Stützen As erforderlich', q: 'reinfBeam', kind: 'rccol' },
+    { key: 'axb', label: 'axb (x unten)', q: 'reinf', kind: 'rc', c: 0, source: 'rc', run: 'rc' },
+    { key: 'ayb', label: 'ayb (y unten)', q: 'reinf', kind: 'rc', c: 1, source: 'rc', run: 'rc' },
+    { key: 'axt', label: 'axt (x oben)', q: 'reinf', kind: 'rc', c: 2, source: 'rc', run: 'rc' },
+    { key: 'ayt', label: 'ayt (y oben)', q: 'reinf', kind: 'rc', c: 3, source: 'rc', run: 'rc' },
+    { key: 'vRatio', label: 'Querkraft vEd/vRd,c', q: 'percent', kind: 'shear', source: 'rc', run: 'rc' },
+    { key: 'punch', label: 'Durchstanzen', q: 'percent', kind: 'punch', source: 'punching', run: 'rc' },
+    { key: 'AsBot', label: 'Balken As unten', q: 'reinfBeam', kind: 'rcbeam', source: 'rcBeams', run: 'rcBeam' },
+    { key: 'AsTop', label: 'Balken As oben', q: 'reinfBeam', kind: 'rcbeam', source: 'rcBeams', run: 'rcBeam' },
+    { key: 'Asw', label: 'Bügel asw', q: 'reinf', kind: 'rcbeam', source: 'rcBeams', run: 'rcBeam' },
+    { key: 'colEta', label: 'Stützen Ausnutzung η', q: 'percent', kind: 'rccol', source: 'rcCols', run: 'rcCol' },
+    { key: 'colAs', label: 'Stützen As erforderlich', q: 'reinfBeam', kind: 'rccol', source: 'rcCols', run: 'rcCol' },
   ],
 };
+export const DESIGN_FAMILIES = Object.keys(DESIGN_COMPONENTS);
+/** design component of a family (default: reinforced concrete) */
+export const designComp = (key, family = 'rc') => DESIGN_COMPONENTS[family]?.find((c) => c.key === key) || null;
+export const RC_LAYERS = DESIGN_COMPONENTS.rc.filter((c) => c.kind === 'rc').map((c) => c.key);
+export const isRcLayer = (key) => RC_LAYERS.includes(key);
+/** a design family ('rc' | 'steel' | 'timber') has results */
+export const hasDesign = (results, family) => (DESIGN_COMPONENTS[family] || []).some((c) => results.design?.[c.source]);
+/** component to show after a design run: keep the current one if that run produces it, else its first */
+export function componentForRun(run, current) {
+  const all = Object.values(DESIGN_COMPONENTS).flat().filter((c) => c.run === run);
+  return all.some((c) => c.key === current) ? current : all[0]?.key;
+}
 
 export function componentDef(key) { return COMPONENTS.find((c) => c.key === key); }
 

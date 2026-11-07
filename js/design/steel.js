@@ -75,6 +75,7 @@ import {
   ETA_CAP, STEEL_TYPES, MEMBER_TYPES, designCode, num, pos, capEta, fmt, fmtMPa,
   designContext, collectLineForces, fillSectionProps, CheckSet, momentDiagram,
 } from './common.js';
+import { msg } from '../core/messages.js';
 
 const ALPHA = { a0: 0.13, a: 0.21, b: 0.34, c: 0.49, d: 0.76 };
 const SQ3 = Math.sqrt(3);
@@ -232,7 +233,7 @@ function steelGeometry(p, m, notes) {
       g.tors = { type: 'open', tmax: Math.max(tf, tw) };
       g.mn = 'I'; g.mnA = Math.min(0.5, Math.max(0, (A - 2 * b * tf) / A));
       g.WvY = hw * tw * hw * tw / (4 * tw); g.WvZ = tf * b * b / 2;
-      if (hw / tw > 72 * m.eps) notes.push(`hw/tw = ${fmt(hw / tw, 1)} > 72ε: shear buckling (EN 1993-1-5) not checked`);
+      if (hw / tw > 72 * m.eps) notes.push(msg('st.shearBuckling', { v: fmt(hw / tw, 1) }));
       break;
     }
     case 'U': {
@@ -247,7 +248,7 @@ function steelGeometry(p, m, notes) {
       g.ltb = { susceptible: p.Iz < p.Iy, curveGen: 'd' };
       g.tors = { type: 'open', tmax: Math.max(tf, tw) };
       g.WvY = hw * tw / 4 * hw;
-      notes.push('U section: torsional-flexural buckling and shear-centre eccentricity not checked');
+      notes.push(msg('st.uSection'));
       break;
     }
     case 'T': {
@@ -262,7 +263,7 @@ function steelGeometry(p, m, notes) {
       g.Avy = b * tf;
       g.ltb = { susceptible: p.Iz < p.Iy, curveGen: 'd' };
       g.tors = { type: 'open', tmax: Math.max(tf, tw) };
-      notes.push('T section: monosymmetry in Mcr and torsional-flexural buckling neglected');
+      notes.push(msg('st.tSection'));
       break;
     }
     case 'L': {
@@ -273,7 +274,7 @@ function steelGeometry(p, m, notes) {
       g.Avz = h * t; g.Avy = b * t;
       g.curveY = 'b'; g.curveZ = 'b';
       g.tors = { type: 'open', tmax: t };
-      notes.push('L section: checked about the geometric y/z axes (principal v-axis buckling and LTB not checked)');
+      notes.push(msg('st.lSection'));
       break;
     }
     case 'RHS':
@@ -341,8 +342,8 @@ function steelGeometry(p, m, notes) {
     g.ltb = { susceptible: p.Iz < p.Iy && p.It > 0, curveGen: 'd' };
     g.tors = p.tmax > 0 ? { type: 'open', tmax: p.tmax } : null;
     g.mn = 'LIN';
-    notes.push(`section shape ${p.shape || '?'} without usable dims: class ${g.fixedClass} assumed, curve c`);
-    if (!g.Avz) notes.push('no shear area – shear not checked');
+    notes.push(msg('st.generic', { shape: p.shape || '?', cls: g.fixedClass }));
+    if (!g.Avz) notes.push(msg('st.noShearArea'));
   }
   return g;
 }
@@ -435,36 +436,36 @@ export function checkSteelMembers(model, mesh, staticResults, caseKeys, opts = {
         const r = checkMember(ctx, rules, line, el, mat, opts || {});
         if (r) out.push(r);
       } catch (e) {
-        out.warnings.push(`Line ${line.id}: steel check failed (${e && e.message})`);
+        out.warnings.push(msg('failed.steel', { id: line.id, err: e && e.message }));
       }
     }
   } catch (e) {
-    out.warnings.push(`Steel design aborted: ${e && e.message}`);
+    out.warnings.push(msg('aborted.steel', { err: e && e.message }));
   }
   return out;
 }
 
 function checkMember(ctx, rules, line, el, mat, opts) {
-  const W = (msg) => { ctx.warnings.push(`Line ${line.id}: ${msg} – steel check skipped`); return null; };
+  const W = (reason) => { ctx.warnings.push(msg('skip.steel', { id: line.id, reason })); return null; };
   const sec0 = ctx.sections.get(Number(el.section));
-  if (!sec0) return W('no section');
+  if (!sec0) return W(msg('r.noSection'));
   const p = fillSectionProps(sec0);
   const m = steelMaterial(mat, rules);
-  if (!m) return W('material without fy');
-  if (!(p.A > 0 && p.Iy > 0 && p.Iz > 0)) return W(`section '${p.name || p.id}' lacks A/Iy/Iz`);
+  if (!m) return W(msg('r.noFy'));
+  if (!(p.A > 0 && p.Iy > 0 && p.Iz > 0)) return W(msg('r.secProps', { name: `'${p.name || p.id}'` }));
   const L = ctx.lineLength(line);
-  if (!(L > 0)) return W('zero length');
+  if (!(L > 0)) return W(msg('r.zeroLength'));
   const segs = ctx.segs.get(Number(line.id));
-  if (!segs || !segs.length) return W('no mesh beams');
+  if (!segs || !segs.length) return W(msg('r.noMesh'));
 
   const notes = [];
-  if (m.alu) notes.push('aluminium approximated with EN 1993-1-1 rules (EN 1999 not implemented)');
+  if (m.alu) notes.push(msg('st.alu'));
   const R = rules.ref;
   const SIA = rules.code === 'SIA';
   const g = steelGeometry(p, m, notes);
   if (!(p.Wely > 0)) p.Wely = p.zmax > 0 ? p.Iy / p.zmax : (g.h ? p.Iy / (g.h / 2) : NaN);
   if (!(p.Welz > 0)) p.Welz = p.ymax > 0 ? p.Iz / p.ymax : (g.b ? p.Iz / (g.b / 2) : NaN);
-  if (!(p.Wely > 0 && p.Welz > 0)) notes.push('elastic section moduli missing – bending checks skipped');
+  if (!(p.Wely > 0 && p.Welz > 0)) notes.push(msg('st.noWel'));
   const { fy, E, G, gM0, gM1 } = m;
   const fyd0 = fy / gM0, fyd1 = fy / gM1;
   const eff = effectiveProps(g, p, m);
@@ -481,9 +482,9 @@ function checkMember(ctx, rules, line, el, mat, opts) {
     else if (cls === 4 && !chs4) { A = eff.A; Wy = eff.Wy; Wz = eff.Wz; wl = 'Weff'; }
     else {
       Wy = p.Wely; Wz = p.Welz; wl = 'Wel';
-      if (cls <= 2 && !wplNoted) { notes.push('Wpl missing – elastic moduli used'); wplNoted = true; }
+      if (cls <= 2 && !wplNoted) { notes.push(msg('st.noWpl')); wplNoted = true; }
     }
-    if (chs4) notes.push('CHS class 4 (EN 1993-1-6) treated as class 3');
+    if (chs4) notes.push(msg('st.chs4'));
     return (resC[cls] = { A, Wy, Wz, wl, plastic: wl === 'Wpl' });
   };
 
@@ -516,9 +517,9 @@ function checkMember(ctx, rules, line, el, mat, opts) {
   const ltbOn = !isTruss && g.ltb.susceptible && Lltb > 0;
   let Mcr = Infinity;
   if (ltbOn) {
-    if (!(p.It > 0)) notes.push('It missing – LTB not checked');
+    if (!(p.It > 0)) notes.push(msg('st.noIt'));
     else Mcr = mcrLTB(E, G, p.Iz, p.Iw, p.It, Lltb, C1);
-  } else if (!isTruss && g.ltb.susceptible && !(Lltb > 0)) notes.push('KLT ≤ 0: laterally restrained, χLT = 1');
+  } else if (!isTruss && g.ltb.susceptible && !(Lltb > 0)) notes.push(msg('st.klt0'));
   const ltbActive = ltbOn && Number.isFinite(Mcr) && Mcr > 0;
 
   const fbData = (cls) => {

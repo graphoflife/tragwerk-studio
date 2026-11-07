@@ -8,8 +8,7 @@ import { emptySpan, spanAddScaled, spanIsEmpty, fixedEndForces, condenseVector }
 import { shellThermalLoad } from './shell.js';
 import { toGlobalVector } from './linalg.js';
 import { lookup } from './assemble.js';
-import { quadHit } from '../core/seclines.js';
-import { panelLayout, panelLineLoads } from './panels.js';
+import { quadHit } from '../mesh/geom.js';
 
 const GDIR = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
 const LDIR = { x: 0, y: 1, z: 2 };
@@ -289,8 +288,6 @@ function shellDirVector(sh, dir, projected) {
 }
 
 function addSurface(data, L, ld, f, warn) {
-  const panel = (data.model.domains || []).find((d) => d.id === ld.domain && d.type === 'panel');
-  if (panel) return addPanelLoad(data, L, ld, panel, f, warn);
   const elems = data.domainShells.get(ld.domain);
   if (!elems) return warn(`Load ${ld.id}: domain ${ld.domain} has no elements.`);
   const dir = parseDir(ld.dir || 'z');
@@ -366,30 +363,6 @@ function addSurfacePoint(data, L, ld, f, warn) {
     L.F[6 * node] += v[0] * w; L.F[6 * node + 1] += v[1] * w; L.F[6 * node + 2] += v[2] * w;
   }
 }
-
-/** Surface load on a load panel → line loads on the supporting lines (see panels.js). */
-function addPanelLoad(data, L, ld, dom, f, warn) {
-  const cache = (data._panels ||= new Map());
-  if (!cache.has(dom.id)) cache.set(dom.id, panelLayout(data.model, dom));
-  const layout = cache.get(dom.id);
-  if (!layout || !layout.targets.length) return warn(`Load ${ld.id}: load panel ${dom.id} has no supporting lines (beams, ribs, walls) – load ignored.`);
-  const dir = parseDir(ld.dir || 'z');
-  if (!dir) return warn(`Load ${ld.id}: invalid direction '${ld.dir}'.`);
-  const ez = layout.ax.ez;
-  // global direction vector of the load (panel normal for 'z'); projection onto the plan for projected loads
-  let vec;
-  if (dir.global) vec = dir.global.map((c) => c * (ld.projected ? Math.abs(dot3(ez, dir.global)) : 1));
-  else vec = (dir.local === 2 ? ez : dir.local === 0 ? layout.ax.ex : layout.ax.ey).slice();
-  const pieces = panelLineLoads(data.model, layout, (p) => surfaceQ(ld, p));
-  for (const pc of pieces) {
-    ['X', 'Y', 'Z'].forEach((dName, k) => {
-      if (Math.abs(vec[k]) < 1e-12) return;
-      const q = pc.q * vec[k];
-      addLineDist(data, L, { id: ld.id, line: pc.line, dir: dName, q1: q, q2: q, a: pc.a, b: pc.b, projected: false }, f, warn);
-    });
-  }
-}
-const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
 /** Condensed local equivalent nodal loads p (12) of a beam span load */
 export function beamEquivalentLocal(be, span) {
