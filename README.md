@@ -4,7 +4,7 @@ Modulare Finite-Elemente-Software für Tragwerke, angelehnt an den Arbeitsablauf
 Geometrie → Elemente → Lasten → Netz → Statik → Knicken → Schwingung → Stahlbeton → Stahl → Holz → Bericht.
 Läuft vollständig im Browser als statische Website (z.B. GitHub Pages) – keine Installation, kein Server, keine Build-Tools.
 
-> Unabhängiges Projekt, nicht mit InterCAD/AxisVM verbunden.
+> Unabhängiges Projekt, nicht mit der Inter-CAD Kft. verbunden und weder von ihr unterstützt noch geprüft. AxisVM ist ein Produkt und eine Marke der Inter-CAD Kft.; der Name wird hier nur als Verweis auf deren Software verwendet.
 
 ## Funktionen
 
@@ -136,4 +136,9 @@ Die Annahmen sind zusätzlich im Kopf der jeweiligen Dateien unter `js/design/` 
 
 ## Lizenzen
 
-three.js © three.js authors, MIT-Lizenz (`vendor/three/LICENSE`). Schrift Inter / JetBrains Mono über Google Fonts (SIL OFL).
+Tragwerk Studio steht unter der MIT-Lizenz (`LICENSE`).
+
+Mitgelieferte Fremdkomponenten:
+
+- three.js © three.js authors, MIT-Lizenz (`vendor/three/LICENSE`).
+- Schriften Inter © The Inter Project Authors und JetBrains Mono © The JetBrains Mono Project Authors, SIL Open Font License 1.1 (`vendor/fonts/OFL-*.txt`). Sie werden mit der Seite ausgeliefert, beim Laden geht keine Anfrage an einen Schriften-Dienst.

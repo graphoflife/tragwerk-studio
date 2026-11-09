@@ -1,6 +1,7 @@
 {
   "name": "tragwerk-studio",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Browser-based modular 3D FEM software for structural analysis and design (Eurocode / SIA)",
   "scripts": {
