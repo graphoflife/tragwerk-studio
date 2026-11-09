@@ -1,7 +1,8 @@
 // Tests for js/design/column.js – RC columns, EN 1992-1-1 (SIA 262 approximation). Hand calculations in comments.
 // Material C30/37 (γc = 1.5 → fcd = 20 MPa, λ = 0.8, η = 1, εcu = 3.5 ‰), B500 (fyd = 434.78 MPa, εyd = 2.174 ‰).
 import assert from 'node:assert/strict';
-import { designRCColumns, isColumn, interactionCurve, columnResistance, columnSection, axialLimits } from '../../js/design/column.js';
+import { isColumn } from '../../js/design/common.js';
+import { designRCColumns, interactionCurve, columnResistance, columnSection, axialLimits } from '../../js/design/column.js';
 import { concreteParams, designMN } from '../../js/design/concrete.js';
 import { BAR_DIAS } from '../../js/design/rebar.js';
 import { lineCase, near, runner } from './helpers.mjs';

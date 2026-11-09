@@ -60,9 +60,8 @@
 // reinforcement, limited to the maximum required along the member (same face, same case).
 // Minimum longitudinal reinforcement as for surfaces (tension zone width), As,max = 0.04·Ac (ok=false).
 
-import { designCode, num, pos, fmt, designContext, collectLineForces, MEMBER_TYPES } from './common.js';
-import { tBeamSetup, tBeamForces } from './tbeam.js';
-import { isColumn } from './column.js';
+import { designCode, num, pos, fmt, designContext, collectLineForces, MEMBER_TYPES, columnCandidate } from './common.js';
+import { tBeamSetup, tBeamSectionForces } from './tbeam.js';
 import { msg } from '../core/messages.js';
 
 export const FLAG_COMPRESSION_REINF = 1;
@@ -453,7 +452,8 @@ export function designRCBeams(model, mesh, staticResults, caseKeys, opts = {}) {
       if (!el || !MEMBER_TYPES.has(el.type)) continue;
       const mat = ctx.materials.get(Number(el.material));
       if (!mat || mat.type !== 'concrete') continue;
-      if (isColumn(model, line)) continue; // columns: column.js (N-M interaction, second order)
+      const col = columnCandidate(ctx, line);
+      if (col && !col.skip) continue; // columns: column.js (N-M interaction, second order)
       try {
         const r = designBeam(ctx, code, line, el, mat, opts);
         if (r) out.push(r);
@@ -523,19 +523,13 @@ function designBeam(ctx, code, line, el, mat, opts) {
       env = { MyMax: new Array(n).fill(-Infinity), MyMin: new Array(n).fill(Infinity), MyRibMax: new Array(n).fill(-Infinity), MyRibMin: new Array(n).fill(Infinity), V: new Array(n).fill(0) };
     }
     if (n !== xs.length) { notes.push(msg('beam.caseMismatch', { key })); continue; }
-    // Plattenbalken: add the slab share within the effective width
-    const slab = tb ? tBeamForces(tb, ctx, ctx.cases[key], f.x) : null;
+    const sf = tBeamSectionForces(tb, ctx, ctx.cases[key], f, { h, hf, ecc: eccZ }); // rib (+ slab share)
     const aB = new Array(n), aT = new Array(n), dF = new Array(n);
     for (let j = 0; j < n; j++) {
-      // T-section moment about its mid-height: eccentric rib (axis at ecc below the slab mid-plane) and slab
-      // normal force act with lever arms; concentric ribs keep the slab mid-plane as reference.
-      const lever = slab && hf > 0 && eccZ ? -(f.N[j] * (h / 2 - hf / 2 + eccZ) + slab.N[j] * (h / 2 - hf / 2)) : 0;
-      const My = f.My[j] + (slab ? slab.M[j] : 0) + lever, N = f.N[j] + (slab ? slab.N[j] : 0);
-      const V = Math.abs(f.Vz[j]) + (slab ? Math.abs(slab.V[j]) : 0);
+      const My = sf.My[j], N = sf.N[j], V = sf.V[j];
       env.MyMax[j] = Math.max(env.MyMax[j], My); env.MyMin[j] = Math.min(env.MyMin[j], My);
       env.MyRibMax[j] = Math.max(env.MyRibMax[j], f.My[j]); env.MyRibMin[j] = Math.min(env.MyRibMin[j], f.My[j]);
       env.V[j] = Math.max(env.V[j], V);
-      f.My[j] = My;
       MyAbsMax = Math.max(MyAbsMax, Math.abs(My));
       if (Math.abs(f.Mz[j]) > Math.max(1, 0.05 * Math.abs(My))) MzSig = true;
       if (Math.abs(f.T[j]) > 1) TSig = true;
@@ -583,7 +577,7 @@ function designBeam(ctx, code, line, el, mat, opts) {
     let maxB = 0, maxT = 0;
     for (let j = 0; j < n; j++) { maxB = Math.max(maxB, aB[j]); maxT = Math.max(maxT, aT[j]); }
     for (let j = 0; j < n; j++) {
-      const tensionBottom = f.My[j] >= 0;
+      const tensionBottom = sf.My[j] >= 0;
       if (tensionBottom) aB[j] = Math.max(aB[j], Math.min(maxB, aB[j] + dF[j] / P.fyd));
       else aT[j] = Math.max(aT[j], Math.min(maxT, aT[j] + dF[j] / P.fyd));
       if (aB[j] > AsBot[j]) AsBot[j] = aB[j];

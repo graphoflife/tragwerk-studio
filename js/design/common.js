@@ -331,3 +331,49 @@ export function momentDiagram(x, M) {
   res.Ms = kDev >= 0 ? M[kDev] : 0;
   return res;
 }
+
+const COS30 = Math.cos(Math.PI / 6);
+
+/**
+ * RC column classification of a line (column.js decides with it, concrete.js skips columns with it):
+ * null (not a column), { skip: msg } (candidate that cannot be designed) or { el, mat, sec, geo }.
+ * Columns: element 'beam', concrete, RECT/CIRC, design.rc.member === 'column' or (member !== 'beam' and
+ * inclined ≤ 30° from global Z). ctx needs nodes, materials and sections maps (designContext provides them).
+ */
+export function columnCandidate(ctx, line) {
+  const el = line && line.element;
+  if (!el || el.type !== 'beam') return null;
+  const member = el.design && el.design.rc ? el.design.rc.member : undefined;
+  if (member === 'beam') return null;
+  const forced = member === 'column';
+  if (!forced) {
+    const a = ctx.nodes.get(Number(line.n1)), b = ctx.nodes.get(Number(line.n2));
+    if (!a || !b) return null;
+    const dx = num(b.x, 0) - num(a.x, 0), dy = num(b.y, 0) - num(a.y, 0), dz = num(b.z, 0) - num(a.z, 0);
+    const L = Math.hypot(dx, dy, dz);
+    if (!(L > 0) || Math.abs(dz) / L < COS30 - 1e-9) return null;
+  }
+  const mat = ctx.materials.get(Number(el.material));
+  if (!mat || mat.type !== 'concrete') return forced ? { skip: mat ? msg('r.notConcrete', { type: mat.type }) : msg('r.noMaterial') } : null;
+  const sec = ctx.sections.get(Number(el.section));
+  if (!sec) return { skip: msg('r.noSection') };
+  const d = sec.dims || {};
+  let geo;
+  if (sec.shape === 'RECT' && pos(d.h, 0) > 0 && pos(d.b, 0) > 0) geo = { shape: 'RECT', b: d.b, h: d.h, D: null };
+  else if (sec.shape === 'CIRC' && pos(d.d, 0) > 0) geo = { shape: 'CIRC', b: d.d, h: d.d, D: d.d };
+  else return { skip: msg('r.shapeRectCirc', { s: sec.shape }) };
+  if (!(pos(mat.fck, 0) > 0)) return { skip: msg('r.noFck') };
+  return { el, mat, sec, geo };
+}
+
+/** True for concrete column candidates (see header). `line` may be a line object or its id. */
+export function isColumn(model, line) {
+  try {
+    const ln = line && typeof line === 'object' ? line : (Array.isArray(model?.lines) ? model.lines.find((l) => l && Number(l.id) === Number(line)) : null);
+    const ctx = { nodes: toMap(model?.nodes), materials: toMap(model?.materials), sections: toMap(model?.sections) };
+    const c = columnCandidate(ctx, ln);
+    return !!(c && !c.skip);
+  } catch (e) {
+    return false;
+  }
+}

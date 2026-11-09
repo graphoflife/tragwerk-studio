@@ -8,6 +8,7 @@ import { checkSteelMembers } from '../../js/design/steel.js';
 import { checkTimberMembers } from '../../js/design/timber.js';
 import { designRCSurfaces, designRCBeams } from '../../js/design/concrete.js';
 import { checkPunching } from '../../js/design/punching.js';
+import { designRCSlabs } from '../../js/design/slabs.js';
 import { designRCColumns } from '../../js/design/column.js';
 
 const verbose = process.argv.includes('-v');
@@ -49,6 +50,13 @@ for (const ex of EXAMPLES) {
       // EC: v = β·VEd/(u1·d) with u1 = 2(c1 + c2) + 4πd
       assert.ok(Math.abs(it.u - (4 * it.c1 + 2 * Math.PI * 2 * it.d)) < 1e-9);
       assert.ok(Math.abs(it.v - 1.15 * it.VEd / (it.u * it.d)) < 1e-6);
+    }
+    if (ex.id === 'slab' || ex.id === 'tbeam') {
+      // one design step: punching zones / beam zones are excluded from the slab shear check
+      const S = designRCSlabs(m, mesh, res, keys);
+      assert.ok(S.rc.vRatio.some((v) => v < 0), `${ex.id}: no excluded shear zone`);
+      const single = checkPunching(m, mesh, res, keys, { rc: S.rc });
+      assert.deepEqual(S.punching.items.map((i) => i.eta), single.items.map((i) => i.eta));
     }
     if (ex.id === 'tbeam') {
       assert.equal(p.items.length, 0, 'columns under ribs are not punching locations');

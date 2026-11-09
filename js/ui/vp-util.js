@@ -186,3 +186,10 @@ export function triangulatePolygon(outer3, holes3, ax) {
   const tris = THREE.ShapeUtils.triangulateShape(contour, holes);
   return { tris, pts: [...outer3, ...(holes3 || []).flat()] };
 }
+
+// work planes: normal, map (u, v, offset) → point, unmap point → (u, v)
+export const PLANES = {
+  XY: { n: [0, 0, 1], map: (u, v, o) => [u, v, o], unmap: (p) => [p[0], p[1]] },
+  XZ: { n: [0, 1, 0], map: (u, v, o) => [u, o, v], unmap: (p) => [p[0], p[2]] },
+  YZ: { n: [1, 0, 0], map: (u, v, o) => [o, u, v], unmap: (p) => [p[1], p[2]] },
+};

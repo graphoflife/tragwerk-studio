@@ -15,11 +15,9 @@ import { importDXF, exportDXF } from '../io/dxf.js';
 import { welcomeDialog } from './dialogs/help.js';
 import { runStatic } from './dialogs/analysis.js';
 import { DEFAULT_PSI } from './dialogs/manage.js';
-import { defaultCaseKey, getCase, caseLabel, componentDef, DESIGN_COMPONENTS, DESIGN_FAMILIES, designComp, hasDesign, RC_LAYERS } from './results-data.js';
-import { memberDetail, rcBeamDetail, rcPointDialog, nearestCorner, columnDetail } from './dialogs/rc.js';
-import { checkName, POS_NAMES } from './design-text.js';
+import { defaultCaseKey, componentDef, DESIGN_COMPONENTS, DESIGN_FAMILIES, designComp, hasDesign } from './results-data.js';
+import { probeResult } from './vp-results.js';
 import { renderParts } from './parts-ui.js';
-import { lineForces } from '../fem/index.js';
 
 export class App {
   constructor(root) {
@@ -401,67 +399,6 @@ export class App {
     store.setResultView({ kind: null, animate: false });
   }
 
-  // design result probe (AxisVM: values at the cursor; double-click opens the detailed design)
-  showDesignInfo(hit) {
-    const el = this.infoEl, rv = store.resultView, R = store.results, mesh = R.mesh;
-    const rows = [];
-    const pct = (v) => `${((v ?? 0) * 100).toFixed(0)} %`;
-    if ((rv.kind === 'steel' || rv.kind === 'timber') && hit.kind === 'line') {
-      const r = (rv.kind === 'steel' ? R.design.steel : R.design.timber)?.find((x) => x.line === hit.id);
-      if (!r) { el.style.display = 'none'; return; }
-      rows.push([t('Stab {id}', { id: hit.id }), pct(r.eta)]);
-      for (const [k, c] of Object.entries(r.checks || {}).sort((a, b) => (b[1].eta ?? 0) - (a[1].eta ?? 0)).slice(0, 5)) rows.push([checkName(k), pct(c.eta)]);
-      rows.push([t('Doppelklick: Details'), '']);
-    } else if (rv.kind === 'rc' && hit.kind === 'line' && designComp(rv.component)?.source === 'rcCols' && R.design.rcCols) {
-      const c = R.design.rcCols.find((x) => x.line === hit.id);
-      if (!c) { el.style.display = 'none'; return; }
-      rows.push([t('Stütze {id}', { id: hit.id }), pct(c.eta)], ['NEd', fmt('force', c.governing?.NEd ?? 0)], ['MEd,y / MEd,z', `${fmt('moment', c.governing?.MEdy ?? 0, { unit: false })} / ${fmt('moment', c.governing?.MEdz ?? 0)}`],
-        [t('As erforderlich'), fmt('reinfBeam', c.As)], [t('Vorschlag'), c.bars ? `${c.bars.n} Ø${Math.round(c.bars.dia * 1000)}` : '–'], [t('Doppelklick: Details'), '']);
-    } else if (rv.kind === 'rc' && hit.kind === 'line' && R.design.rcBeams) {
-      const r = R.design.rcBeams.find((b) => b.line === hit.id);
-      if (!r?.x?.length) { el.style.display = 'none'; return; }
-      const L = r.x[r.x.length - 1] || 1, x = (hit.t ?? 0.5) * L;
-      let k = 0;
-      for (let j = 1; j < r.x.length; j++) if (Math.abs(r.x[j] - x) < Math.abs(r.x[k] - x)) k = j;
-      rows.push([t('Balken {id}', { id: hit.id }), `x = ${fmt('len', r.x[k])}`]);
-      if (r.env) rows.push(['My max / min', `${fmt('moment', r.env.MyMax[k], { unit: false })} / ${fmt('moment', r.env.MyMin[k])}`]);
-      rows.push([t('As unten'), fmt('reinfBeam', r.AsBot[k])], [t('As oben'), fmt('reinfBeam', r.AsTop[k])], ['asw', fmt('reinf', r.Asw[k])], [t('Doppelklick: Details'), '']);
-    } else if (rv.kind === 'rc' && rv.component === 'punch' && hit.kind === 'node') {
-      const it = R.design.punching?.items.find((i) => i.node === hit.id);
-      if (!it) { el.style.display = 'none'; return; }
-      rows.push([t('Knoten {id}', { id: hit.id }), t(POS_NAMES[it.type])], ['VEd', fmt('force', it.VEd)], ['d', fmt('dim', it.d)], ['η', pct(it.eta)],
-        [it.fail ? t('verstärken') : it.needsReinf ? t('Durchstanzbewehrung erforderlich') : t('ohne Bewehrung erfüllt'), '']);
-    } else if (rv.kind === 'rc' && R.design.rc && (hit.kind === 'domain' || hit.kind === 'node') && hit.p) {
-      const dom = hit.kind === 'domain' ? hit.id : mesh.shells.find((s) => s.nodes.includes(mesh.modelNodeToMesh?.[hit.id]))?.domain;
-      const cn = dom != null ? nearestCorner(mesh, dom, hit.p) : null;
-      if (!cn) { el.style.display = 'none'; return; }
-      const k = cn.e * 4 + cn.c, A = R.design.rc.asCorner;
-      rows.push([t('Fläche {id}', { id: dom }), '']);
-      ['axb', 'ayb', 'axt', 'ayt'].forEach((n, j) => rows.push([n, fmt('reinf', A[k * 4 + j])]));
-      const vr = R.design.rc.vRatio[k];
-      rows.push(['vEd/vRd,c', vr < 0 ? t('Durchstanzbereich') : pct(vr)]);
-      const gi = R.design.rc.gov[k * 4 + Math.max(0, RC_LAYERS.indexOf(rv.component))];
-      if (gi >= 0) rows.push([t('massgebend'), caseLabel(store, R.design.rc.keys[gi])]);
-      rows.push([t('Doppelklick: Berechnung'), '']);
-    } else { el.style.display = 'none'; return; }
-    clear(el).appendChild(h('div.kv', { style: { minWidth: '180px' } }, rows.flatMap(([a, b], i) => (i === 0 ? [h('b', a), h('span.muted', b)] : [h('span', a), h('span', b)]))));
-    el.style.display = '';
-  }
-
-  // double-click on a design result: member details or the design trace at a slab point
-  openResultDetail(hit) {
-    const rv = store.resultView, R = store.results;
-    if (!hit || !R.mesh) return false;
-    if ((rv.kind === 'steel' || rv.kind === 'timber') && hit.kind === 'line') { memberDetail(this, rv.kind, hit.id); return true; }
-    if (rv.kind === 'rc' && hit.kind === 'line' && R.design.rcCols?.some((c) => c.line === hit.id) && (designComp(rv.component)?.source === 'rcCols' || !R.design.rcBeams?.some((b) => b.line === hit.id))) { columnDetail(this, hit.id); return true; }
-    if (rv.kind === 'rc' && hit.kind === 'line' && R.design.rcBeams?.some((b) => b.line === hit.id)) { rcBeamDetail(this, hit.id); return true; }
-    if (rv.kind === 'rc' && R.design.rc && hit.kind === 'domain' && hit.p) {
-      const cn = nearestCorner(R.mesh, hit.id, hit.p);
-      if (cn) { rcPointDialog(this, cn.e, cn.c); return true; }
-    }
-    return false;
-  }
-
   /* ---------------- selection helpers ---------------- */
   // everything visible: geometry plus the shown supports and the loads of the active load case
   visibleGlyphs(kind) { return (this.vp.glyphPicks || []).filter((g) => g.kind === kind).map((g) => g.id); }
@@ -604,36 +541,11 @@ export class App {
     openMenu(at, items);
   }
 
-  // Result probe: values at the hovered node / member while results are shown
+  // Result probe (AxisVM: values at the cursor; double-click opens the detail)
   showHoverInfo(hit) {
-    const el = this.infoEl, rv = store.resultView, mesh = store.results.mesh;
-    const hide = () => { el.style.display = 'none'; };
-    if (hit && mesh && DESIGN_FAMILIES.includes(rv.kind)) return this.showDesignInfo(hit);
-    if (!hit || !mesh || !(rv.kind === 'static' || rv.kind === 'spectrum')) return hide();
-    const cs = getCase(store, rv.caseKey);
-    if (!cs) return hide();
-    const r = cs.res || (rv.envSide === 'min' ? cs.min : cs.max);
-    const rows = [];
-    if (hit.kind === 'node') {
-      const i = mesh.modelNodeToMesh?.[hit.id];
-      if (i == null) return hide();
-      const d = r.disp, R = r.reac;
-      rows.push([t('Knoten {id}', { id: hit.id }), '']);
-      ['eX', 'eY', 'eZ'].forEach((k, j) => rows.push([k, fmt('disp', d[6 * i + j])]));
-      if ([0, 1, 2].some((j) => Math.abs(R[6 * i + j]) > 1e-9)) ['Rx', 'Ry', 'Rz'].forEach((k, j) => rows.push([k, fmt('force', R[6 * i + j])]));
-    } else if (hit.kind === 'line') {
-      const l = store.idx.lines.get(hit.id);
-      if (!l?.element) return hide();
-      let f;
-      try { f = lineForces(mesh, r, hit.id); } catch (e) { return hide(); }
-      if (!f?.x?.length) return hide();
-      const L = f.x[f.x.length - 1] || 1, x = (hit.t ?? 0.5) * L;
-      let k = 0;
-      for (let j = 1; j < f.x.length; j++) if (Math.abs(f.x[j] - x) < Math.abs(f.x[k] - x)) k = j;
-      rows.push([t('Stab {id}', { id: hit.id }), `x = ${fmt('len', f.x[k])}`]);
-      [['N', 'force', 'Nx'], ['Vy', 'force'], ['Vz', 'force'], ['T', 'moment', 'Tx'], ['My', 'moment'], ['Mz', 'moment']].forEach(([c, q, lab]) => rows.push([lab || c, fmt(q, f[c][k])]));
-    } else return hide();
-    clear(el).appendChild(h('div.kv', { style: { minWidth: '170px' } }, rows.flatMap(([a, b], i) => (i === 0 ? [h('b', a), h('span.muted', b)] : [h('span', a), h('span', b)]))));
+    const el = this.infoEl, rows = probeResult(store, hit);
+    if (!rows) { el.style.display = 'none'; return; }
+    clear(el).appendChild(h('div.kv', { style: { minWidth: '180px' } }, rows.flatMap(([a, b], i) => (i === 0 ? [h('b', a), h('span.muted', b)] : [h('span', a), h('span', b)]))));
     el.style.display = '';
   }
 

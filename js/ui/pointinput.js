@@ -9,7 +9,7 @@ import { toast } from './dom.js';
 import { V } from '../core/model.js';
 import { parsePointInput } from '../core/pointparse.js';
 import { fmt, fromDisplay, unitLabel } from '../core/units.js';
-import { PLANES } from './viewport.js';
+import { PLANES } from './vp-util.js';
 
 const AXES = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
 const AXIS_CLASS = { X: 'x', Y: 'y', Z: 'z' };

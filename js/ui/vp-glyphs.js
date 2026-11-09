@@ -321,3 +321,13 @@ export function buildAxes(vp, group) {
     if (ln) { ln.renderOrder = 10; group.add(ln); }
   }
 }
+
+/* ---------------- section lines (model view) ---------------- */
+export function buildSectionLines(vp, group) {
+  const sls = vp.store.model.sectionLines || [];
+  if (!sls.length) return;
+  const seg = [];
+  for (const sl of sls) { seg.push(...sl.a, ...sl.b); group.add(label(sl.name, sl.a, 'big')); }
+  const ln = vp.lines.make(seg, vp.C.sel, 2, { dashed: true, dashSize: vp.sz * 0.8, gapSize: vp.sz * 0.5, opacity: 0.8 });
+  if (ln) group.add(ln);
+}

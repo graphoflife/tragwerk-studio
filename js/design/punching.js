@@ -1,10 +1,13 @@
 // Punching shear of slabs at columns and point supports – EN 1992-1-1 6.4 and SIA 262 4.3.6.
 // Pure ES module (no DOM).
 //
-// checkPunching(model, mesh, staticResults, caseKeys, opts?) →
-//   { zones: [{ p, r }] (slab shear excluded), items: [{ node, domain, source:'column'|'support', type:'interior'|'edge'|'corner',
-//               c1, c2, round, d, a, u, uEff, factor, VEd, caseKey, v, vRd, vRdMax, eta, etaMax,
-//               needsReinf, fail, rhoL, perimeter:[[x,y,z]…] }], warnings, code }
+// punchingSetup(model, mesh, staticResults, caseKeys, opts?) → setup: locations with geometry and VEd
+//   (computed once; independent of the reinforcement)
+// punchingZones(setup) → [{ p, r }] areas where punching governs (slab shear is not checked there)
+// punchingChecks(setup, rc?) → items: [{ node, domain, source:'column'|'support', type:'interior'|'edge'|'corner',
+//   c1, c2, round, d, a, u, uEff, factor, VEd, caseKey, v, vRd, vRdMax, eta, etaMax, needsReinf, fail,
+//   rhoL, perimeter:[[x,y,z]…] }]   (rc = designRCSurfaces result for ρl)
+// checkPunching(model, mesh, staticResults, caseKeys, opts?) → { items, zones, warnings, code } (all in one)
 //
 // Punching nodes: corner nodes of horizontal concrete plate/shell domains with a column (beam/rib/truss line
 // not lying in the slab plane) or a node support, unless a beam/rib in the slab plane frames in there
@@ -25,8 +28,8 @@
 //   column face: vEd,0 = β·VEd/(u0·d) ≤ vRd,max = 0.4·ν·fcd, ν = 0.6(1 − fck/250) (6.4.5(3)),
 //   u0 = column perimeter (interior), c2 + 3d ≤ c2 + 2c1 (edge), 3d ≤ c1 + c2 (corner).
 //   Punching reinforcement needed when vEd > vRd,c; slab too thin when vEd > 1.5·vRd,c or vEd,0 > vRd,max.
-//   zoneR: radius up to the outer perimeter u_out = β·VEd/(vRd,c·d) (+ d) – the slab shear check is
-//   skipped inside (punching governs there).
+//   Zone: radius up to the outer perimeter u_out = β·VEd/(vRd,c·d) (+ d) with vRd,c for ρl = 0 (the
+//   zones are needed before the slab reinforcement is known) – the slab shear check is skipped inside.
 // SIA 262: control perimeter at dv/2 (rounded), uEff = ke·u with ke = 0.9 / 0.7 / 0.65,
 //   VRd,c = kr·τcd·dv·uEff, τcd = 0.3·√fck/γc, kr = 1/(0.45 + 0.18·ψ·d·kg) ≤ 2 (d in mm, kg = 1),
 //   ψ = 1.5·(rs/d)·(fsd/Es) (approximation level 1), rs = 0.22·L with L = distance to the nearest
@@ -72,15 +75,15 @@ function perimeterPoints(c1, c2, round, a, n = 72) {
   return pts;
 }
 
-export function checkPunching(model, mesh, staticResults, caseKeys, opts = {}) {
+export function punchingSetup(model, mesh, staticResults, caseKeys, opts = {}) {
   opts = opts || {};
   const code = designCode(model, opts);
   const warnings = [];
-  const out = { items: [], zones: [], warnings, code };
+  const S = { code, opts, locations: [], beamZones: [], warnings };
   try {
     const ctx = designContext(model, mesh, staticResults, caseKeys, warnings, 'shells');
     const shells = mesh?.shells || [];
-    if (!shells.length || !ctx.keys.length) return out;
+    if (!shells.length || !ctx.keys.length) return S;
     const X = mesh.nodes;
     const meshPos = (i) => [X[3 * i], X[3 * i + 1], X[3 * i + 2]];
     const modelToMesh = new Map();
@@ -104,7 +107,7 @@ export function checkPunching(model, mesh, staticResults, caseKeys, opts = {}) {
       for (const e of elems) shells[e].nodes.forEach((nd, c) => { if (!corners.has(nd)) corners.set(nd, []); corners.get(nd).push(e * 4 + c); });
       slabs.push({ dom, sh, t, L, P: Pc, F, corners, prov: dom.rcProv ? providedAreas(dom.rcProv) : null });
     }
-    if (!slabs.length) return out;
+    if (!slabs.length) return S;
     // column lines per model node
     const segs = ctx.segs;
     const cols = new Map();
@@ -116,13 +119,13 @@ export function checkPunching(model, mesh, staticResults, caseKeys, opts = {}) {
       }
     }
     const supports = new Map();
-    for (const s of model.supports || []) if (s.type === 'node') supports.set(Number(s.node), s);
+    for (const sp of model.supports || []) if (sp.type === 'node') supports.set(Number(sp.node), sp);
     const supPos = [...supports.keys()].map((id) => [id, ctx.nodes.get(id)]).filter(([, nd]) => nd).map(([id, nd]) => [id, P(nd)]);
     // nodes on line supports (walls, edge supports) are not punching locations
     const onLineSup = new Set();
-    for (const s of model.supports || []) {
-      if (s.type !== 'line') continue;
-      const l = (model.lines || []).find((x) => x.id === s.line);
+    for (const sp of model.supports || []) {
+      if (sp.type !== 'line') continue;
+      const l = (model.lines || []).find((x) => x.id === sp.line);
       if (l) { onLineSup.add(l.n1); onLineSup.add(l.n2); }
     }
     // candidate nodes
@@ -131,7 +134,7 @@ export function checkPunching(model, mesh, staticResults, caseKeys, opts = {}) {
       const mi = modelToMesh.get(Number(n.id));
       if (mi == null) continue;
       // horizontal slabs only (flat slabs on columns); curved/inclined shells are not checked
-      const slab = slabs.find((s) => s.corners.has(mi) && Math.abs(s.sh.ez[2]) >= 0.98);
+      const slab = slabs.find((sl) => sl.corners.has(mi) && Math.abs(sl.sh.ez[2]) >= 0.98);
       if (!slab || onLineSup.has(n.id)) continue;
       const ez = slab.sh.ez;
       const colLines = (cols.get(n.id) || []).filter(({ line }) => {
@@ -159,7 +162,7 @@ export function checkPunching(model, mesh, staticResults, caseKeys, opts = {}) {
       if (!(c1 > 0)) { const sz = pos(sup?.size, pos(opts.supportSize, 0.3)); c1 = c2 = sz; }
       if (beamInPlane) {
         const d0 = (slab.L.d.xt + slab.L.d.yt) / 2;
-        out.zones.push({ p: meshPos(mi), r: Math.max(c1, c2) / Math.SQRT2 + 2 * d0 });
+        S.beamZones.push({ p: meshPos(mi), r: Math.max(c1, c2) / Math.SQRT2 + 2 * d0 });
         continue;
       }
       cands.push({ n, mi, slab, colLines, sup, c1, c2, round });
@@ -168,7 +171,7 @@ export function checkPunching(model, mesh, staticResults, caseKeys, opts = {}) {
       const { n, mi, slab, colLines, sup, c1, c2, round } = cd;
       const dRow = Math.max(2, 4 * (slab.L.d.xt + slab.L.d.yt) / 2);
       if (!colLines.length && supPos.some(([id, p]) => id !== n.id && len(sub(p, P(n))) < Math.max(dRow, c1 + 0.05))) continue;
-      const ez = slab.sh.ez, P0 = slab.P, Lay = slab.L;
+      const ez = slab.sh.ez, Lay = slab.L;
       const d = (Lay.d.xt + Lay.d.yt) / 2;
       if (!(d > 0)) continue;
       // design force over the cases
@@ -192,67 +195,83 @@ export function checkPunching(model, mesh, staticResults, caseKeys, opts = {}) {
       const a = code === 'SIA' ? d / 2 : 2 * d;
       const pos3 = meshPos(mi);
       const ex = slab.sh.ex, ey = slab.sh.ey;
-      const pts2 = perimeterPoints(c1, c2, round, a);
-      const coplanar = slabs.filter((s) => Math.abs(s.F.dist(pos3)) <= s.F.tol && Math.abs(dot(s.F.ez, ez)) > 0.99);
-      const pts3 = pts2.map(([u, v]) => [pos3[0] + ex[0] * u + ey[0] * v, pos3[1] + ex[1] * u + ey[1] * v, pos3[2] + ex[2] * u + ey[2] * v]);
-      const inFlags = pts3.map((p) => coplanar.some((s) => s.F.inside2(s.F.to2(p))));
+      const pts3 = perimeterPoints(c1, c2, round, a).map(([u, v]) => [pos3[0] + ex[0] * u + ey[0] * v, pos3[1] + ex[1] * u + ey[1] * v, pos3[2] + ex[2] * u + ey[2] * v]);
+      const coplanar = slabs.filter((sl) => Math.abs(sl.F.dist(pos3)) <= sl.F.tol && Math.abs(dot(sl.F.ez, ez)) > 0.99);
+      const inFlags = pts3.map((p) => coplanar.some((sl) => sl.F.inside2(sl.F.to2(p))));
       const share = inFlags.filter(Boolean).length / pts3.length;
       if (share < 0.05) continue;
-      const type = share >= 0.95 ? 'interior' : share >= 0.4 ? 'edge' : 'corner';
-      const u = round ? Math.PI * (c1 + 2 * a) : 2 * (c1 + c2) + 2 * Math.PI * a;
-      // reinforcement ratio of the top layers at the node
-      let ax = 0, ay = 0;
-      if (opts.rc?.asCorner) for (const k of slab.corners.get(mi) || []) { ax = Math.max(ax, opts.rc.asCorner[k * 4 + 2]); ay = Math.max(ay, opts.rc.asCorner[k * 4 + 3]); }
-      if (slab.prov) { ax = Math.max(ax, slab.prov[2]); ay = Math.max(ay, slab.prov[3]); }
-      const rhoL = Math.min(0.02, Math.sqrt((ax / Lay.d.xt) * (ay / Lay.d.yt)) || 0);
-      const it = {
-        node: n.id, domain: slab.dom.id, source: colLines.length ? 'column' : 'support', type,
-        c1, c2, round, d, a, u, VEd, caseKey, rhoL, share,
+      S.locations.push({
+        node: n.id, mi, slab, source: colLines.length ? 'column' : 'support', type: share >= 0.95 ? 'interior' : share >= 0.4 ? 'edge' : 'corner',
+        c1, c2, round, d, a, pos3, VEd, caseKey, share,
+        u: round ? Math.PI * (c1 + 2 * a) : 2 * (c1 + c2) + 2 * Math.PI * a,
         perimeter: pts3.filter((_, k) => inFlags[k] || share >= 0.95),
-      };
-      if (code === 'SIA') {
-        const ke = { interior: 0.9, edge: 0.7, corner: 0.65 }[type];
-        const tcd = 0.3 * Math.sqrt(P0.fckM) / P0.gc * 1000; // kN/m²
-        let span = pos(opts.span, 0);
-        if (!span) {
-          let best = Infinity;
-          for (const o of cands) if (o !== cd && o.slab === slab) best = Math.min(best, len(sub(meshPos(o.mi), pos3)));
-          span = Number.isFinite(best) ? best : 6;
-        }
-        const rs = 0.22 * span;
-        const psi = 1.5 * (rs / d) * (P0.fyd / ES);
-        const kr = Math.min(2, 1 / (0.45 + 0.18 * psi * d * 1000));
-        const uEff = ke * u;
-        const VRd = kr * tcd * d * uEff;
-        const VRdMax = Math.min(2 * VRd, 3.5 * tcd * d * uEff);
-        Object.assign(it, { factor: ke, uEff, kr, psi, rs, v: VEd, vRd: VRd, vRdMax: VRdMax, eta: VEd / VRd, etaMax: VEd / VRdMax, ref: 'SIA 262 4.3.6' });
-      } else {
-        const beta = { interior: 1.15, edge: 1.4, corner: 1.5 }[type];
-        const uEff = type === 'interior' ? u : share * u;
-        const dmm = d * 1000;
-        const k = Math.min(2, 1 + Math.sqrt(200 / dmm));
-        const vmin = 0.035 * k ** 1.5 * Math.sqrt(P0.fckM);
-        const vRdc = Math.max(0.18 / P0.gc * k * Math.cbrt(100 * rhoL * P0.fckM), vmin) * 1000; // kN/m²
-        const v = beta * VEd / (uEff * d);
-        const nu = 0.6 * (1 - P0.fckM / 250);
-        const u0 = round ? Math.PI * c1 : type === 'interior' ? 2 * (c1 + c2) : type === 'edge' ? Math.min(c2 + 3 * d, c2 + 2 * c1) : Math.min(3 * d, c1 + c2);
-        const v0 = beta * VEd / (u0 * d);
-        const vRdMax = 0.4 * nu * P0.fcd;
-        Object.assign(it, { factor: beta, uEff, u0, v, v0, vRd: vRdc, vRdMax, eta: v / vRdc, etaMax: Math.max(v0 / vRdMax, v / (1.5 * vRdc)), ref: 'EN 1992-1-1 6.4' });
-      }
-      // zone governed by punching: up to the outer perimeter u_out where vEd = vRd,c (EC 6.4.5(4))
-      const uCol = round ? Math.PI * c1 : 2 * (c1 + c2);
-      const uOut = code === 'SIA' ? VEd / (it.kr * 0.3 * Math.sqrt(P0.fckM) / P0.gc * 1000 * d * it.factor) : it.factor * VEd / (it.vRd * d) / (type === 'interior' ? 1 : share);
-      it.rOut = Math.max(0, (uOut - uCol) / (2 * Math.PI));
-      it.center = pos3;
-      it.zoneR = Math.min(Math.max(Math.max(c1, c2) / Math.SQRT2 + 2 * d, it.rOut + d), 4);
-      it.needsReinf = it.eta > 1;
-      it.fail = it.etaMax > 1;
-      out.items.push(it);
-      out.zones.push({ p: it.center, r: it.zoneR });
+      });
+    }
+    // SIA: rs from the distance to the nearest other punching location of the same slab
+    for (const L0 of S.locations) {
+      let best = Infinity;
+      for (const o of S.locations) if (o !== L0 && o.slab === L0.slab) best = Math.min(best, len(sub(o.pos3, L0.pos3)));
+      L0.span = pos(opts.span, Number.isFinite(best) ? best : 6);
     }
   } catch (e) {
     warnings.push(msg('aborted.punching', { err: e && e.message }));
   }
-  return out;
+  return S;
+}
+
+/** Resistance of one location for a top reinforcement ratio ρl (pure; see header). */
+function resistance(loc, code, rhoL) {
+  const { VEd, d, u, type, share, c1, c2, round } = loc, P0 = loc.slab.P;
+  if (code === 'SIA') {
+    const ke = { interior: 0.9, edge: 0.7, corner: 0.65 }[type];
+    const tcd = 0.3 * Math.sqrt(P0.fckM) / P0.gc * 1000; // kN/m²
+    const rs = 0.22 * loc.span;
+    const psi = 1.5 * (rs / d) * (P0.fyd / ES);
+    const kr = Math.min(2, 1 / (0.45 + 0.18 * psi * d * 1000));
+    const uEff = ke * u;
+    const VRd = kr * tcd * d * uEff, VRdMax = Math.min(2 * VRd, 3.5 * tcd * d * uEff);
+    return { factor: ke, uEff, kr, psi, rs, v: VEd, vRd: VRd, vRdMax: VRdMax, eta: VEd / VRd, etaMax: VEd / VRdMax, uOut: VEd / (kr * tcd * d * ke), ref: 'SIA 262 4.3.6' };
+  }
+  const beta = { interior: 1.15, edge: 1.4, corner: 1.5 }[type];
+  const uEff = type === 'interior' ? u : share * u;
+  const k = Math.min(2, 1 + Math.sqrt(200 / (d * 1000)));
+  const vmin = 0.035 * k ** 1.5 * Math.sqrt(P0.fckM);
+  const vRdc = Math.max(0.18 / P0.gc * k * Math.cbrt(100 * rhoL * P0.fckM), vmin) * 1000; // kN/m²
+  const v = beta * VEd / (uEff * d);
+  const nu = 0.6 * (1 - P0.fckM / 250);
+  const u0 = round ? Math.PI * c1 : type === 'interior' ? 2 * (c1 + c2) : type === 'edge' ? Math.min(c2 + 3 * d, c2 + 2 * c1) : Math.min(3 * d, c1 + c2);
+  const v0 = beta * VEd / (u0 * d), vRdMax = 0.4 * nu * P0.fcd;
+  return { factor: beta, uEff, u0, v, v0, vRd: vRdc, vRdMax, eta: v / vRdc, etaMax: Math.max(v0 / vRdMax, v / (1.5 * vRdc)), uOut: beta * VEd / (vRdc * d) / (type === 'interior' ? 1 : share), ref: 'EN 1992-1-1 6.4' };
+}
+
+/** Areas where punching governs: around beam-supported columns and up to u_out (ρl = 0) at each location. */
+export function punchingZones(S) {
+  return [...S.beamZones, ...S.locations.map((loc) => {
+    const uCol = loc.round ? Math.PI * loc.c1 : 2 * (loc.c1 + loc.c2);
+    const rOut = Math.max(0, (resistance(loc, S.code, 0).uOut - uCol) / (2 * Math.PI));
+    return { p: loc.pos3, r: Math.min(Math.max(Math.max(loc.c1, loc.c2) / Math.SQRT2 + 2 * loc.d, rOut + loc.d), 4) };
+  })];
+}
+
+/** Punching checks with ρl from the top reinforcement (provided, else required from the surface design rc). */
+export function punchingChecks(S, rc = null) {
+  return S.locations.map((loc) => {
+    const { slab } = loc, Lay = slab.L;
+    let ax = 0, ay = 0;
+    if (rc?.asCorner) for (const k of slab.corners.get(loc.mi) || []) { ax = Math.max(ax, rc.asCorner[k * 4 + 2]); ay = Math.max(ay, rc.asCorner[k * 4 + 3]); }
+    if (slab.prov) { ax = Math.max(ax, slab.prov[2]); ay = Math.max(ay, slab.prov[3]); }
+    const rhoL = Math.min(0.02, Math.sqrt((ax / Lay.d.xt) * (ay / Lay.d.yt)) || 0);
+    const R = resistance(loc, S.code, rhoL);
+    return {
+      node: loc.node, domain: slab.dom.id, source: loc.source, type: loc.type, c1: loc.c1, c2: loc.c2, round: loc.round,
+      d: loc.d, a: loc.a, u: loc.u, VEd: loc.VEd, caseKey: loc.caseKey, rhoL, share: loc.share, perimeter: loc.perimeter, center: loc.pos3,
+      ...R, needsReinf: R.eta > 1, fail: R.etaMax > 1,
+    };
+  });
+}
+
+/** All in one: { items, zones, warnings, code } (opts.rc = surface design for ρl). */
+export function checkPunching(model, mesh, staticResults, caseKeys, opts = {}) {
+  const S = punchingSetup(model, mesh, staticResults, caseKeys, opts);
+  return { items: punchingChecks(S, opts?.rc), zones: punchingZones(S), warnings: S.warnings, code: S.code };
 }

@@ -3,7 +3,7 @@
 // Pure ES module (no DOM). Units (SPEC.md §1): m, m², kN, kNm, kN/m². N > 0 tension, NEd < 0 compression.
 //
 // API
-//   isColumn(model, line) → boolean
+//   (candidates: isColumn / columnCandidate in common.js)
 //   designRCColumns(model, mesh, staticResults, caseKeys, opts?) → [ColumnResult] (+ array props .warnings, .code)
 //   columnSection(geom, As?) → column section with its bar layout (`sec` of the functions below)
 //   axialLimits(sec, P) → { NRd (pure compression, ≤ 0), NRdt (pure tension, ≥ 0) }
@@ -12,7 +12,7 @@
 //   P = concreteParams(material, fyk, code) from concrete.js; axis 'y' = bending about local y (My,
 //   depth h along local z), axis 'z' = bending about local z (Mz, depth b along local y).
 //
-// Candidates (isColumn): lines with element.type 'beam' (not 'rib'/'truss'), concrete material, section
+// Candidates (common.js columnCandidate): lines with element.type 'beam' (not 'rib'/'truss'), concrete material, section
 // RECT (dims.h, dims.b) or CIRC (dims.d), and element.design.rc.member === 'column' or (member !== 'beam'
 // and the line is inclined ≤ 30° from global Z). designRCColumns also warns (and skips) for candidates
 // whose section / fck / length / mesh is missing; non-concrete or non-vertical lines are skipped silently
@@ -96,7 +96,7 @@
 // compression); rho = As,req/Ac; for CIRC b = h = D (D = null for RECT); columnResistance returns 0 outside
 // the N range.
 
-import { designCode, num, pos, fmt, designContext, collectLineForces, capEta, momentDiagram, toMap } from './common.js';
+import { designCode, num, pos, fmt, designContext, collectLineForces, capEta, momentDiagram, toMap, columnCandidate } from './common.js';
 import { concreteParams } from './concrete.js';
 import { BAR_DIAS, barArea } from './rebar.js';
 import { msg } from '../core/messages.js';
@@ -107,7 +107,6 @@ const S_MAX = 0.30;                  // max. centre spacing of longitudinal bars
 const AS_UPPER = 0.10;               // upper search limit of the required As (fraction of Ac)
 const AS_MAX = 0.04;                 // EN 1992-1-1 9.5.2(3)
 const MAX_EXTRA = 3;                 // denser bar patterns tried for the suggestion (extra bars per face)
-const COS30 = Math.cos(Math.PI / 6);
 const AXES = ['y', 'z'];
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -290,46 +289,6 @@ export function interactionCurve(sec, P, axis, nPts = 40) {
   return out;
 }
 
-// ───────────────────────────────────────── candidates ─────────────────────────────────────────
-
-/** Classification of a line: null (not a column), { skip } (candidate that cannot be designed) or data. */
-function classify(ctx, line) {
-  const el = line && line.element;
-  if (!el || el.type !== 'beam') return null;
-  const member = el.design && el.design.rc ? el.design.rc.member : undefined;
-  if (member === 'beam') return null;
-  const forced = member === 'column';
-  if (!forced) {
-    const a = ctx.nodes.get(Number(line.n1)), b = ctx.nodes.get(Number(line.n2));
-    if (!a || !b) return null;
-    const dx = num(b.x, 0) - num(a.x, 0), dy = num(b.y, 0) - num(a.y, 0), dz = num(b.z, 0) - num(a.z, 0);
-    const L = Math.hypot(dx, dy, dz);
-    if (!(L > 0) || Math.abs(dz) / L < COS30 - 1e-9) return null;
-  }
-  const mat = ctx.materials.get(Number(el.material));
-  if (!mat || mat.type !== 'concrete') return forced ? { skip: mat ? msg('r.notConcrete', { type: mat.type }) : msg('r.noMaterial') } : null;
-  const sec = ctx.sections.get(Number(el.section));
-  if (!sec) return { skip: msg('r.noSection') };
-  const d = sec.dims || {};
-  let geo;
-  if (sec.shape === 'RECT' && pos(d.h, 0) > 0 && pos(d.b, 0) > 0) geo = { shape: 'RECT', b: d.b, h: d.h, D: null };
-  else if (sec.shape === 'CIRC' && pos(d.d, 0) > 0) geo = { shape: 'CIRC', b: d.d, h: d.d, D: d.d };
-  else return { skip: msg('r.shapeRectCirc', { s: sec.shape }) };
-  if (!(pos(mat.fck, 0) > 0)) return { skip: msg('r.noFck') };
-  return { el, mat, sec, geo };
-}
-
-/** True for concrete column candidates (see header). `line` may be a line object or its id. */
-export function isColumn(model, line) {
-  try {
-    const ln = line && typeof line === 'object' ? line : (Array.isArray(model?.lines) ? model.lines.find((l) => l && Number(l.id) === Number(line)) : null);
-    const ctx = { nodes: toMap(model?.nodes), materials: toMap(model?.materials), sections: toMap(model?.sections) };
-    const c = classify(ctx, ln);
-    return !!(c && !c.skip);
-  } catch (e) {
-    return false;
-  }
-}
 
 // ─────────────────────────────────────────── design ───────────────────────────────────────────
 
@@ -482,7 +441,7 @@ export function designRCColumns(model, mesh, staticResults, caseKeys, opts = {})
     const ctx = designContext(model, mesh, staticResults, caseKeys, out.warnings, 'beams');
     for (const line of Array.isArray(model?.lines) ? model.lines : []) {
       let cls;
-      try { cls = classify(ctx, line); } catch (e) { cls = null; }
+      try { cls = columnCandidate(ctx, line); } catch (e) { cls = null; }
       if (!cls) continue;
       if (cls.skip) { out.warnings.push(msg('skip.rcCol', { id: line.id, reason: cls.skip })); continue; }
       try {

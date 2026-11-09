@@ -3,7 +3,8 @@ import { t } from '../../i18n.js';
 import { h, ic, openDialog, toast, download, promptDialog, section } from '../dom.js';
 import { fmt, fmtNum, toDisplay, unitLabel } from '../../core/units.js';
 import { sectionValues, sectionStats } from '../../core/seclines.js';
-import { sectionSource, sectionSample } from '../vp-results.js';
+import { sectionSource } from '../vp-results.js';
+import { sectionSample } from '../vp-res-sections.js';
 import { caseLabel } from '../results-data.js';
 import { chart } from '../chart.js';
 

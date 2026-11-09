@@ -4,10 +4,11 @@ import { t } from '../i18n.js';
 import { h, toast } from './dom.js';
 import { addNode, addLine, addDomain, V, P, defaultLineElement, transformSelection, rotatePoint, centroid } from '../core/model.js';
 import { domainFrame } from '../mesh/geom.js';
-import { PLANES } from './viewport.js';
+import { PLANES } from './vp-util.js';
 import { fmt } from '../core/units.js';
 import { PointInput, POINT_KEYS_HINT } from './pointinput.js';
 import { surfaceLoadAtDialog } from './dialogs/loads.js';
+import { openResult } from './vp-results.js';
 
 export class Tools {
   constructor(app) {
@@ -131,7 +132,7 @@ class SelectTool {
   }
   dblclick(e) {
     const hit = this.T.vp.pick(e.x, e.y, this.T.store.view.selFilter);
-    if (this.T.app.openResultDetail?.(hit)) return;
+    if (openResult(this.T.app, hit)) return;
     if (hit) { this.T.store.select({ [hit.kind + 's']: [hit.id] }, 'replace'); this.T.app.showSide('props'); }
   }
 }

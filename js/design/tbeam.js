@@ -108,7 +108,7 @@ function samples(setup, ctx, xs) {
 }
 
 /** Slab share of the T-beam forces at the stations xs for one result case: { M, N, V } arrays. */
-export function tBeamForces(setup, ctx, caseResult, xs) {
+function tBeamForces(setup, ctx, caseResult, xs) {
   const sv = caseResult?.shells;
   const n = xs.length;
   const M = new Array(n).fill(0), N = new Array(n).fill(0), V = new Array(n).fill(0);
@@ -124,4 +124,23 @@ export function tBeamForces(setup, ctx, caseResult, xs) {
     }
   }
   return { M, N, V };
+}
+
+/**
+ * Design section forces of a member for one result case at its stations: the rib forces f
+ * (collectLineForces) plus, for a T-beam (setup from tBeamSetup), the slab share within beff.
+ * Moments refer to the section mid-height: an eccentric rib (axis ecc along local z from the slab
+ * mid-plane) and the slab normal force act with lever arms; concentric ribs keep the slab mid-plane as
+ * reference (FE model and section coincide there). hf = flange thickness (0: no T-section).
+ * @returns { My, N, V } arrays, V = |V|
+ */
+export function tBeamSectionForces(setup, ctx, caseResult, f, { h = 0, hf = 0, ecc = 0 } = {}) {
+  if (!setup) return { My: f.My, N: f.N, V: f.Vz.map(Math.abs) };
+  const slab = tBeamForces(setup, ctx, caseResult, f.x);
+  const levers = hf > 0 && ecc;
+  return {
+    My: f.My.map((m, j) => m + slab.M[j] - (levers ? f.N[j] * (h / 2 - hf / 2 + ecc) + slab.N[j] * (h / 2 - hf / 2) : 0)),
+    N: f.N.map((v, j) => v + slab.N[j]),
+    V: f.Vz.map((v, j) => Math.abs(v) + Math.abs(slab.V[j])),
+  };
 }

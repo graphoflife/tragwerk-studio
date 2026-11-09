@@ -10,7 +10,8 @@ import { nodeLoadDialog, lineLoadDialog, surfaceLoadDialog, temperatureDialog, s
 import { transformDialog, splitDialog } from './dialogs/transform.js';
 import { generatorDialog } from './dialogs/generators.js';
 import { runStatic, runModalDialog, runBucklingDialog, runSpectrumDialog, runDesign, meshGenerate, meshSettings, checkModel } from './dialogs/analysis.js';
-import { rcParamsDialog, rcProvidedDialog, rcProtocolDialog, rcBeamDetail, memberDetail } from './dialogs/rc.js';
+import { rcParamsDialog, rcProvidedDialog, rcProtocolDialog, rcBeamDetail } from './dialogs/rc.js';
+import { memberDetail } from './dialogs/member.js';
 import { designComp, isRcLayer } from './results-data.js';
 import { settingsDialog, modelInfoDialog } from './dialogs/settings.js';
 import { openTables } from './dialogs/tables.js';

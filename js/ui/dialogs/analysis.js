@@ -9,8 +9,8 @@ import { runFem, cancelFem } from '../../core/analysis.js';
 import { fmt } from '../../core/units.js';
 import { defaultCaseKey, componentDef, componentForRun } from '../results-data.js';
 import { checkSteelMembers } from '../../design/steel.js';
-import { designRCSurfaces, designRCBeams } from '../../design/concrete.js';
-import { checkPunching } from '../../design/punching.js';
+import { designRCBeams } from '../../design/concrete.js';
+import { designRCSlabs } from '../../design/slabs.js';
 import { designRCColumns } from '../../design/column.js';
 import { checkTimberMembers } from '../../design/timber.js';
 
@@ -355,18 +355,6 @@ export function designCaseKeys(st) {
   return { keys: Object.keys(s.cases).filter((k) => k.startsWith('LC:')), basis: t('Lastfälle (ohne Teilsicherheitsbeiwerte!)'), warn: true };
 }
 
-// beams/ribs (axis + half width): the slab shear check is skipped next to them (beam shear governs)
-function beamSegments(st) {
-  const out = [];
-  for (const l of st.model.lines) {
-    if (!l.element || !['beam', 'rib'].includes(l.element.type)) continue;
-    const sec = st.idx.sections.get(l.element.section);
-    const a = st.idx.nodes.get(l.n1), b = st.idx.nodes.get(l.n2);
-    out.push({ a: [a.x, a.y, a.z], b: [b.x, b.y, b.z], hb: (sec?.dims?.b || sec?.dims?.d || 0.3) / 2 });
-  }
-  return out;
-}
-
 export async function runDesign(app, kind, { quiet = false } = {}) {
   const st = app.store;
   if (!st.results.static) {
@@ -390,10 +378,7 @@ export async function runDesign(app, kind, { quiet = false } = {}) {
       const n = st.results.design.timber.length, f = st.results.design.timber.filter((r) => r.eta > 1).length;
       say(n ? t('Holzbemessung: {n} Stäbe, {f} nicht erfüllt · Basis: {b}', { n, f, b: basis }) : t('Keine Holzstäbe gefunden.'), n ? (f ? 'warn' : 'ok') : 'info', 5000);
     } else if (kind === 'rc') {
-      // punching zones (geometry only) → surfaces (slab shear outside these zones) → punching with ρl
-      const pre = checkPunching(st.model, mesh, st.results.static, keys, opts);
-      st.results.design.rc = designRCSurfaces(st.model, mesh, st.results.static, keys, { ...opts, shearExclude: pre.zones, shearExcludeSegs: beamSegments(st) });
-      st.results.design.punching = checkPunching(st.model, mesh, st.results.static, keys, { ...opts, rc: st.results.design.rc });
+      Object.assign(st.results.design, designRCSlabs(st.model, mesh, st.results.static, keys, opts)); // { rc, punching }
       const doms = st.results.design.rc.domains;
       if (!doms.length) say(t('Keine Stahlbetonflächen gefunden (Material Beton erforderlich).'), 'info');
       else {
