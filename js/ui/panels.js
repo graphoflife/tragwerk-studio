@@ -40,7 +40,7 @@ function secOptions(store) {
 function renderProps(app, el) {
   const st = app.store;
   const tool = app.tools?.id, opts = app.tools?.opts || {};
-  if (tool && tool !== 'select' && tool !== 'orbit') el.appendChild(toolOptions(app, tool, opts));
+  if (tool && app.tools.isDrawing()) el.appendChild(toolOptions(app, tool, opts));
   const s = st.selection;
   const n = st.selCount();
   if (!n) {
@@ -81,7 +81,7 @@ function tipRow(iconName, text) {
 function toolOptions(app, tool, opts) {
   const st = app.store, d = app.drawDefaults;
   const wrap = h('div');
-  const titles = { move: t('Verschieben'), copy: t('Kopieren'), rotate: t('Drehen'), node: t('Knoten setzen'), line: opts.element ? t('{t} zeichnen', { t: t(TYPE_LABEL[opts.element]) }) : t('Linien zeichnen'), rect: opts.domain ? t('{t} zeichnen', { t: t(TYPE_LABEL[opts.domain]) }) : t('Rechteck zeichnen'), polygon: opts.domain ? t('Fläche zeichnen') : t('Polygon zeichnen'), arc: t('Bogen zeichnen'), measure: t('Messen') };
+  const titles = { transform: t({ translate: 'Verschieben', rotate: 'Drehen', mirror: 'Spiegeln', scale: 'Skalieren' }[opts.kind] || 'Verschieben'), node: t('Knoten setzen'), line: opts.element ? t('{t} zeichnen', { t: t(TYPE_LABEL[opts.element]) }) : t('Linien zeichnen'), rect: opts.domain ? t('{t} zeichnen', { t: t(TYPE_LABEL[opts.domain]) }) : t('Rechteck zeichnen'), polygon: opts.domain ? t('Fläche zeichnen') : t('Polygon zeichnen'), arc: t('Bogen zeichnen'), measure: t('Messen') };
   const sec = h('div.side-section', h('div.side-section-title', ic('sliders'), titles[tool] || tool));
   if (opts.element && ['beam', 'rib', 'truss'].includes(opts.element)) {
     app.ensureDrawDefaults(opts.element);

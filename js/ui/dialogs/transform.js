@@ -1,81 +1,72 @@
-// Geometric transformations of the selection (move/copy, rotate, mirror, scale) and line splitting.
+// Geometric transformations of the selection (translate, rotate, mirror, scale) and line splitting.
 import { t } from '../../i18n.js';
 import { h, clear, openDialog, field, numInput, segmented, toast, hintBox, checkInput, selectInput } from '../dom.js';
-import { transformSelection, rotatePoint, splitLine, V, centroid, P, defaultLineElement } from '../../core/model.js';
+import { splitLine } from '../../core/model.js';
+
+// AxisVM transformations: options first, then the defining points are picked in the model (tools.js).
+const METHODS = {
+  translate: [['incremental', 'Schrittweise'], ['distribute', 'Aufteilen'], ['spread', 'Abstand'], ['consecutive', 'Mehrfach'], ['move', 'Verschieben'], ['detach', 'Abtrennen']],
+  rotate: [['incremental', 'Schrittweise'], ['distribute', 'Aufteilen'], ['spread', 'Mit Winkel'], ['consecutive', 'Mehrfach'], ['move', 'Verschieben'], ['detach', 'Abtrennen']],
+  mirror: [['copy', 'Kopieren'], ['multiple', 'Mehrfach'], ['move', 'Verschieben'], ['detach', 'Abtrennen']],
+  scale: [['incremental', 'Schrittweise'], ['distribute', 'Aufteilen'], ['consecutive', 'Mehrfach'], ['resize', 'Grösse ändern']],
+};
+const METHOD_HELP = {
+  incremental: 'N Kopien, jede um den Schritt weiter', distribute: 'N Kopien gleichmässig über den Schritt verteilt', spread: 'N Kopien im Abstand d bzw. Winkel α',
+  consecutive: 'Je eine Kopie pro Schritt, weitere Schritte bis Esc', multiple: 'Je eine Kopie pro Spiegelebene, weitere bis Esc', copy: 'Eine gespiegelte Kopie',
+  move: 'Auswahl verschieben – angeschlossene Linien bleiben verbunden', detach: 'Auswahl verschieben und von den übrigen Linien trennen', resize: 'Auswahl selbst skalieren',
+};
+const TITLES = { translate: 'Verschieben / Kopieren', rotate: 'Drehen', mirror: 'Spiegeln', scale: 'Skalieren' };
+const ICONS = { translate: 'move', rotate: 'rotate', mirror: 'mirror', scale: 'scale' };
+const STEPS = {
+  translate: 'Nach OK Start- und Endpunkt des Vektors anklicken (oder Koordinaten tippen).',
+  rotate: 'Nach OK Drehpunkt, Startpunkt und Endpunkt des Bogens anklicken – die Drehachse steht senkrecht zur Ansicht (in der Perspektive: Z).',
+  mirror: 'Nach OK zwei Punkte der Spiegelebene anklicken – die Ebene steht senkrecht zur Ansicht.',
+  scale: 'Nach OK Zentrum, Bezugspunkt und dessen neue Lage anklicken – die Faktoren folgen aus den Koordinatenverhältnissen.',
+};
+// last settings per command
+const LAST = {};
 
 export function transformDialog(app, kind) {
   const st = app.store;
-  const sel = st.selection;
-  // centre of selection as default pivot
-  const pts = [];
-  sel.nodes.forEach((id) => pts.push(P(st.idx.nodes.get(id))));
-  sel.lines.forEach((id) => { const l = st.idx.lines.get(id); pts.push(P(st.idx.nodes.get(l.n1)), P(st.idx.nodes.get(l.n2))); });
-  sel.domains.forEach((id) => st.idx.domains.get(id).nodes.forEach((n) => pts.push(P(st.idx.nodes.get(n)))));
-  const c = centroid(pts).map((x) => Math.round(x * 1000) / 1000);
-  const s = { mode: 'move', copies: 1, d: [0, 0, 3], axis: 'Z', center: c, angle: 90, plane: 'YZ', planePos: c[0], factor: [2, 2, 2], connect: false, connectType: 'none' };
+  const s = LAST[kind] || (LAST[kind] = {
+    method: kind === 'mirror' ? 'copy' : kind === 'scale' ? 'resize' : 'move', n: 1, d: 1, angle: 90, h: 0,
+    connect: 'none', connectElement: null, copyElements: true, copyLoads: true,
+  });
   const body = h('div');
-  const titles = { translate: t('Verschieben / Kopieren'), rotate: t('Drehen'), mirror: t('Spiegeln'), scale: t('Skalieren') };
-  const vec = (arr, q) => h('div.grid3', ['X', 'Y', 'Z'].map((a, i) => field(a, numInput({ value: arr[i], q, onChange: (v) => { arr[i] = v ?? 0; } }), { stack: true })));
   const render = () => {
     clear(body);
-    if (kind !== 'mirror') {
-      body.appendChild(field(t('Modus'), segmented([{ value: 'move', label: t('Verschieben'), icon: 'move' }, { value: 'copy', label: t('Kopieren'), icon: 'copy' }], s.mode, (v) => { s.mode = v; render(); }, { full: true }), { stack: true }));
-    } else {
-      body.appendChild(field(t('Modus'), segmented([{ value: 'move', label: t('Spiegeln') }, { value: 'copy', label: t('Gespiegelte Kopie') }], s.mode, (v) => { s.mode = v; render(); }, { full: true }), { stack: true }));
+    const grid = h('div.method-grid');
+    for (const [m, label] of METHODS[kind]) {
+      grid.appendChild(h('button.btn.sm' + (s.method === m ? '.primary' : ''), { onclick: () => { s.method = m; render(); }, tip: [t(label), t(METHOD_HELP[m])] }, t(label)));
     }
-    if (kind === 'translate') { body.appendChild(h('h4', t('Verschiebungsvektor'))); body.appendChild(vec(s.d, 'len')); }
+    body.appendChild(field(t('Methode'), grid, { stack: true, help: t(METHOD_HELP[s.method]) }));
+    const copies = !['move', 'detach', 'resize', 'copy', 'consecutive', 'multiple'].includes(s.method);
+    const row = [];
+    if (copies) row.push(field('N', numInput({ value: s.n, min: 1, max: 500, onChange: (v) => { s.n = Math.max(1, Math.round(v || 1)); } }), { stack: true }));
+    if (kind === 'translate' && s.method === 'spread') row.push(field('d', numInput({ value: s.d, q: 'len', onChange: (v) => { s.d = v || 0; } }), { stack: true }));
     if (kind === 'rotate') {
-      body.appendChild(field(t('Drehachse'), segmented([{ value: 'X', label: 'X' }, { value: 'Y', label: 'Y' }, { value: 'Z', label: 'Z' }], s.axis, (v) => { s.axis = v; }, { full: true }), { stack: true }));
-      body.appendChild(field(t('Winkel'), numInput({ value: s.angle, q: 'angle', onChange: (v) => { s.angle = v || 0; } })));
-      body.appendChild(h('h4', t('Drehpunkt')));
-      body.appendChild(vec(s.center, 'len'));
+      row.push(field('α', numInput({ value: s.angle, q: 'angle', onChange: (v) => { s.angle = v || 0; } }), { stack: true, help: s.method === 'spread' ? null : t('Wird verwendet, wenn beim Startpunkt Enter gedrückt wird.') }));
+      row.push(field('h', numInput({ value: s.h, q: 'len', onChange: (v) => { s.h = v || 0; } }), { stack: true, help: t('Versatz entlang der Drehachse je Schritt') }));
     }
-    if (kind === 'mirror') {
-      body.appendChild(field(t('Spiegelebene'), segmented([{ value: 'YZ', label: t('YZ (x = konst.)') }, { value: 'XZ', label: t('XZ (y = konst.)') }, { value: 'XY', label: t('XY (z = konst.)') }], s.plane, (v) => { s.plane = v; s.planePos = { YZ: c[0], XZ: c[1], XY: c[2] }[v]; render(); }, { full: true }), { stack: true }));
-      body.appendChild(field(t('Lage der Ebene'), numInput({ value: s.planePos, q: 'len', onChange: (v) => { s.planePos = v ?? 0; } })));
-    }
-    if (kind === 'scale') {
-      body.appendChild(h('h4', t('Faktoren')));
-      body.appendChild(h('div.grid3', ['X', 'Y', 'Z'].map((a, i) => field(a, numInput({ value: s.factor[i], onChange: (v) => { s.factor[i] = v ?? 1; } }), { stack: true }))));
-      body.appendChild(h('h4', t('Bezugspunkt')));
-      body.appendChild(vec(s.center, 'len'));
-    }
-    if (s.mode === 'copy' && kind !== 'mirror') {
-      body.appendChild(h('h4', t('Kopien')));
-      body.appendChild(field(t('Anzahl'), numInput({ value: s.copies, min: 1, max: 500, onChange: (v) => { s.copies = Math.max(1, Math.round(v || 1)); } })));
-      body.appendChild(checkInput(t('Kopierte Knoten mit Original verbinden'), s.connect, (v) => { s.connect = v; render(); }));
-      if (s.connect) {
-        body.appendChild(field(t('Verbindungselement'), selectInput({ value: s.connectType, options: [{ value: 'none', label: t('Geometrielinie') }, { value: 'beam', label: t('Balken') }, { value: 'truss', label: t('Fachwerkstab') }], onChange: (v) => { s.connectType = v; } })));
-        body.appendChild(hintBox(t('Ideal für Stützen zwischen Geschossen: Decke auswählen, 3 m nach oben kopieren, Knoten mit Balken verbinden.')));
+    if (row.length) body.appendChild(h('div.grid3', row));
+    const makesCopies = !['move', 'detach', 'resize'].includes(s.method);
+    if (makesCopies) {
+      body.appendChild(field(t('Knoten zum Verbinden'), segmented([{ value: 'none', label: t('Keine') }, { value: 'double', label: t('Doppelmarkierte') }, { value: 'all', label: t('Alle') }], s.connect,
+        (v) => { s.connect = v; render(); }, { full: true }), { stack: true, help: s.connect === 'double' ? t('{n} doppelmarkierte Knoten (Alt+Klick)', { n: st.selection.dbl.size }) : null }));
+      if (s.connect !== 'none') {
+        body.appendChild(field(t('Verbindung als'), selectInput({ value: s.connectElement || '', options: [{ value: '', label: t('Geometrielinie') }, { value: 'beam', label: t('Balken') }, { value: 'truss', label: t('Fachwerkstab') }], onChange: (v) => { s.connectElement = v || null; } })));
       }
+      body.appendChild(checkInput(t('Elemente kopieren'), s.copyElements, (v) => { s.copyElements = v; }));
+      body.appendChild(checkInput(t('Lasten kopieren'), s.copyLoads, (v) => { s.copyLoads = v; }));
     }
+    body.appendChild(hintBox(t(STEPS[kind])));
   };
   render();
   openDialog({
-    title: titles[kind], sub: t('{n} Objekte', { n: st.selCount() }), iconName: { translate: 'move', rotate: 'rotate', mirror: 'mirror', scale: 'scale' }[kind], mod: 'lavender', body,
-    buttons: [{ label: t('Abbrechen'), kind: 'ghost' }, { label: t('Ausführen'), kind: 'primary', onClick: () => {
-      let xf;
-      if (kind === 'translate') xf = (p, k) => V.add(p, V.mul(s.d, k));
-      if (kind === 'rotate') {
-        const u = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] }[s.axis];
-        xf = (p, k) => rotatePoint(p, s.center, u, s.angle * Math.PI / 180 * k);
-      }
-      if (kind === 'mirror') {
-        const ax = { YZ: 0, XZ: 1, XY: 2 }[s.plane];
-        xf = (p) => { const q = [...p]; q[ax] = 2 * s.planePos - p[ax]; return q; };
-      }
-      if (kind === 'scale') xf = (p, k) => p.map((x, i) => s.center[i] + (x - s.center[i]) * Math.pow(s.factor[i], k));
-      const copies = s.mode === 'copy' ? (kind === 'mirror' ? 1 : s.copies) : 0;
-      let el = null;
-      if (s.connect && s.connectType !== 'none') {
-        const d = app.ensureDrawDefaults(s.connectType);
-        el = defaultLineElement(s.connectType, d.material, d.section);
-      }
-      let newSel;
-      st.commit(titles[kind], (m) => { newSel = transformSelection(m, sel, xf, { copies, connect: s.connect && copies > 0, connectElement: el }); });
-      if (newSel && copies) st.select({ nodes: [...newSel.nodes], lines: [...newSel.lines], domains: [...newSel.domains] }, 'replace');
-      app.vp.zoomExtents();
-      toast(t('Transformation ausgeführt.'), 'ok');
+    title: t(TITLES[kind]), sub: t('{n} Objekte', { n: st.geoCount() }), iconName: ICONS[kind], mod: 'lavender', body,
+    buttons: [{ label: t('Abbrechen'), kind: 'ghost' }, { label: 'OK', kind: 'primary', onClick: () => {
+      if (s.connect === 'double' && !st.selection.dbl.size && !['move', 'detach', 'resize'].includes(s.method)) toast(t('Keine doppelmarkierten Knoten – Alt+Klick markiert Knoten doppelt.'), 'info');
+      app.tools.set('transform', { kind, ...s });
     } }],
   });
 }

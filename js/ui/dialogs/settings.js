@@ -22,6 +22,8 @@ export function settingsDialog(app) {
     h('div.grid2',
       field(t('Farbschema'), segmented([{ value: 'light', label: t('Hell'), icon: 'sun' }, { value: 'dark', label: t('Dunkel'), icon: 'moon' }], app.isDark() ? 'dark' : 'light', (v) => { if ((v === 'dark') !== app.isDark()) app.toggleTheme(); }, { full: true }), { stack: true }),
       field(t('Sprache'), segmented([{ value: 'de', label: 'Deutsch' }, { value: 'en', label: 'English' }], getLang(), (v) => { if (v !== getLang()) app.toggleLang(); }, { full: true }), { stack: true })),
+    field(t('Hintergrund'), segmented([{ value: 'auto', label: t('Wie Farbschema') }, { value: 'white', label: t('Weiss') }, { value: 'lightgray', label: t('Hellgrau') }, { value: 'darkgray', label: t('Dunkelgrau') }, { value: 'black', label: t('Schwarz') }],
+      app.store.view.background || 'auto', (v) => app.setBackground(v), { full: true }), { stack: true }),
     field(t('Signifikante Stellen'), numInput({ value: dec, min: 2, max: 8, onChange: (v) => { dec = Math.round(v || 4); } })),
     h('h4', t('Einheiten')), grid,
     hintBox(t('Intern rechnet das Programm konsistent in m, kN, t und s. Einheiten betreffen nur Anzeige und Eingabe.')));

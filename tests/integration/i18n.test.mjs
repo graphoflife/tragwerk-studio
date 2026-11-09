@@ -1,4 +1,5 @@
-// Every literal t('…') key in the UI must have an English translation (unless it is language-neutral).
+// Every literal t('…') key in the UI – and every command label, description and ribbon title – must have an
+// English translation (unless it is language-neutral).
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -14,11 +15,13 @@ const files = [];
   }
 })(root);
 
-const neutral = (s) => !/[a-zäöüß]{3,}/i.test(s.replace(/\{\w+\}/g, '')) || /^(Tragwerk Studio|Eurocode|Deutsch|English)$/.test(s);
+const neutral = (s) => !/[a-zäöüß]{3,}/i.test(s.replace(/\{\w+\}/g, '')) || /^(Tragwerk Studio|Eurocode|Deutsch|English|Deutsch \/ English|SIA)$/.test(s);
 const missing = new Set();
 for (const f of files) {
   const src = readFileSync(f, 'utf8');
-  for (const m of src.matchAll(/\bt\('((?:[^'\\]|\\.)*)'/g)) {
+  // t('…') calls, and the command/ribbon tables whose label, desc and title are translated at run time
+  const keys = /commands\.js$/.test(f) ? /\b(?:t\(|label: |desc: |title: )'((?:[^'\\]|\\.)*)'/g : /\bt\('((?:[^'\\]|\\.)*)'/g;
+  for (const m of src.matchAll(keys)) {
     const key = m[1].replace(/\\'/g, "'");
     if (!(key in EN) && !neutral(key)) missing.add(key);
   }

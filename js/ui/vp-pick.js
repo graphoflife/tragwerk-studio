@@ -1,5 +1,5 @@
 // Picking and snapping in the 3D view: hit tests for nodes, lines, support/load glyphs and surfaces, box
-// selection, and the snap rules behind the point input (nodes, midpoints, lines, surfaces, grid, ortho).
+// selection, and the snap rules behind the point input (nodes, midpoints, lines, surfaces, grid).
 // The methods are mixed into Viewport (viewport.js) and use its camera, ray, model and glyph picks.
 import * as THREE from 'three';
 import { V, P } from '../core/model.js';
@@ -102,19 +102,35 @@ export class Picking {
   }
 
   /* ---------------- workplane & snapping ---------------- */
-  workplanePoint(x, y) {
-    const wp = this.store.view.workplane, pl = PLANES[wp.plane];
+  // Drawing plane { key, off, view }: the work plane, or – when it is seen edge-on (XY in the front or
+  // side view) – the global plane facing the camera (AxisVM: the cursor moves in the plane of the view).
+  // through: a point the plane passes through – always (always = true: dragging, moving) or only for the
+  // view plane (its depth then comes from the reference point).
+  drawPlane(through = null, always = false) {
+    const wp = this.store.view.workplane;
+    const d = this.camera.getWorldDirection(new THREE.Vector3());
+    const dir = [d.x, d.y, d.z];
+    let key = wp.plane, off = wp.offset, view = false;
+    if (Math.abs(V.dot(dir, PLANES[key].n)) < 0.25) {
+      const k = [0, 1, 2].reduce((a, b) => (Math.abs(dir[b]) > Math.abs(dir[a]) ? b : a), 0);
+      key = ['YZ', 'XZ', 'XY'][k]; off = 0; view = true;
+    }
+    if (through && (always || view)) off = V.dot(PLANES[key].n, through);
+    return { key, off, view };
+  }
+
+  workplanePoint(x, y, through = null, always = false) {
+    const { key, off } = this.drawPlane(through, always);
     const ray = this.ray(x, y);
-    const n = new THREE.Vector3(...pl.n);
-    const plane = new THREE.Plane(n, -wp.offset);
+    const plane = new THREE.Plane(new THREE.Vector3(...PLANES[key].n), -off);
     const out = new THREE.Vector3();
     if (!ray.intersectPlane(plane, out)) return null;
     return [out.x, out.y, out.z];
   }
 
-  // Object snaps (node, line midpoint, nearest point on line) take priority over workplane snaps
-  // (grid, free). Returns { p, kind, obj, label, node?, line? }.
-  snap(x, y, { from = null, ortho = false, allowMid = true, surface = false } = {}) {
+  // Object snaps (node, line midpoint, nearest point on line) take priority over drawing-plane snaps
+  // (grid, free). through/always: see drawPlane. Returns { p, kind, obj, label, node?, line? }.
+  snap(x, y, { allowMid = true, surface = false, through = null, always = false } = {}) {
     const v = this.store.view;
     const { model, idx } = this.store;
     if (v.snapNodes) {
@@ -151,31 +167,21 @@ export class Picking {
           const stp = v.grid.step || 1;
           p = [Math.round(p[0] / stp) * stp, Math.round(p[1] / stp) * stp, zs[0]];
         }
-        if ((ortho || v.ortho) && from) {
-          const dd = V.sub(p, from);
-          const k = [0, 1, 2].reduce((a, b) => (Math.abs(dd[b]) > Math.abs(dd[a]) ? b : a), 0);
-          const pp = [...from]; pp[k] += dd[k]; p = pp;
-        }
         return { p: p.map((c) => Math.round(c * 1e6) / 1e6), kind: 'surface', domain: id, obj: true, label: t('Auf Fläche {id}', { id }) };
       }
     }
-    let p = this.workplanePoint(x, y);
+    const dp = this.drawPlane(through, always), pl = PLANES[dp.key];
+    let p = this.workplanePoint(x, y, through, always);
     if (!p) return null;
-    const wp = v.workplane, pl = PLANES[wp.plane];
     let kind = 'free';
     if (v.grid.snap) {
       const st = v.grid.step || 1;
       let [u, w] = pl.unmap(p);
       u = Math.round(u / st) * st; w = Math.round(w / st) * st;
-      p = pl.map(u, w, wp.offset);
+      p = pl.map(u, w, dp.off);
       kind = 'grid';
     }
-    if ((ortho || v.ortho) && from) {
-      const d = V.sub(p, from);
-      const k = [0, 1, 2].reduce((a, b) => (Math.abs(d[b]) > Math.abs(d[a]) ? b : a), 0);
-      p = [...from]; p[k] += d[k];
-    }
-    return { p: p.map((c) => Math.round(c * 1e6) / 1e6), kind, obj: false, label: kind === 'grid' ? t('Raster') : t('Arbeitsebene {p}', { p: wp.plane }) };
+    return { p: p.map((c) => Math.round(c * 1e6) / 1e6), kind, obj: false, label: kind === 'grid' ? t('Raster') : t(dp.view ? 'Ansichtsebene {p}' : 'Arbeitsebene {p}', { p: dp.key }) };
   }
 
   // Point on the line (p0 + s·u) closest to the mouse ray – used for axis constraints

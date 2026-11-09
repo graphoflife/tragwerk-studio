@@ -11,12 +11,16 @@
 
 const SEP = /[\s;]+/;
 
+// functions allowed in values (AxisVM coordinate fields accept e.g. cos(45)); angles in degrees
+const FN = { sin: (d) => Math.sin(d * Math.PI / 180), cos: (d) => Math.cos(d * Math.PI / 180), tan: (d) => Math.tan(d * Math.PI / 180), sqrt: Math.sqrt, abs: Math.abs, pi: Math.PI };
+
 export function evalNumber(s) {
-  const x = s.replace(/,/g, '.').replace(/×/g, '*');
-  if (!/^[\d\s.+\-*/()eE^]+$/.test(x)) return null;
+  const x = s.replace(/,/g, '.').replace(/×/g, '*').toLowerCase();
+  if (!/^(?:[\d\s.+\-*/()e^]|sin|cos|tan|sqrt|abs|pi)+$/.test(x)) return null;
+  const expr = x.replace(/\^/g, '**').replace(/\b(sin|cos|tan|sqrt|abs)\(/g, 'f.$1(').replace(/\bpi\b/g, 'f.pi');
   try {
     // eslint-disable-next-line no-new-func
-    const v = Function(`"use strict"; return (${x.replace(/\^/g, '**')});`)();
+    const v = Function('f', `"use strict"; return (${expr});`)(FN);
     return Number.isFinite(v) ? v : null;
   } catch (e) { return null; }
 }

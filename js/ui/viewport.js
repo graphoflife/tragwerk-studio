@@ -17,7 +17,7 @@ export class Viewport {
   constructor(container, store) {
     this.el = container;
     this.store = store;
-    this.C = colors3d();
+    this.C = colors3d(this.store?.view?.background);
     this.lines = new LineFactory();
     this.handler = null;
     this.leftOrbit = false;
@@ -75,6 +75,8 @@ export class Viewport {
     this.canvas.addEventListener('pointerleave', () => this.handler?.leave?.());
     this.canvas.addEventListener('dblclick', (e) => this.handler?.dblclick?.(this.evt(e)));
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    // AxisVM: double-click with the wheel zooms to fit
+    this.canvas.addEventListener('auxclick', (e) => { if (e.button === 1 && e.detail === 2) this.zoomExtents(); });
 
     this.raycaster = new THREE.Raycaster();
     this.domainMesh = null;
@@ -206,7 +208,7 @@ export class Viewport {
     const b = modelBounds(this.store.model);
     this.bounds = b;
     this.sz = Math.max(0.04, b.size * 0.018);
-    this.C = colors3d();
+    this.C = colors3d(this.store?.view?.background);
   }
 
   /* ---------------- grid ---------------- */
@@ -439,6 +441,11 @@ export class Viewport {
       for (const id of s.nodes) { const n = idx.nodes.get(id); if (n) pos.push(n.x, n.y, n.z); }
       if (pos.length) { const p = makePoints(pos, C.sel, 11, { depthTest: false }); p.renderOrder = 30; g.add(p); }
     }
+    if (s.dbl.size) {
+      const pos = [];
+      for (const id of s.dbl) { const n = idx.nodes.get(id); if (n) pos.push(n.x, n.y, n.z); }
+      if (pos.length) { const p = makePoints(pos, C.dbl, 17, { depthTest: false }); p.renderOrder = 29; g.add(p); }
+    }
     if (s.lines.size) {
       const pos = [];
       for (const id of s.lines) {
@@ -576,8 +583,11 @@ export class Viewport {
   onDown(e) {
     this.canvas.focus({ preventScroll: true });
     if (e.pointerType === 'touch') { this._down = { x: e.clientX, y: e.clientY, button: 0, touch: true, orbit: true }; return; }
-    const orbit = this.leftOrbit || e.altKey;
+    // AxisVM: middle button pans (Ctrl: faster), Alt+middle rotates; Alt+left is double selection
+    const orbit = this.leftOrbit;
     this.controls.mouseButtons.LEFT = orbit ? THREE.MOUSE.ROTATE : -1;
+    this.controls.mouseButtons.MIDDLE = e.altKey ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+    this.controls.panSpeed = e.ctrlKey ? 3 : 1;
     this._down = { x: e.clientX, y: e.clientY, button: e.button, orbit };
     if (e.button === 0 && !orbit) {
       this.canvas.setPointerCapture(e.pointerId);
@@ -610,6 +620,13 @@ export class Viewport {
     } else if (d.button === 2 && !moved) {
       this.handler?.context?.(this.evt(e));
     }
+  }
+
+  // + / − keys: zoom about the cursor (a wheel step at the last mouse position)
+  zoomStep(dir) {
+    const r = this.canvas.getBoundingClientRect(), m = this.lastMouse;
+    const x = r.left + (m ? m.x : r.width / 2), y = r.top + (m ? m.y : r.height / 2);
+    this.canvas.dispatchEvent(new WheelEvent('wheel', { deltaY: dir > 0 ? -120 : 120, clientX: x, clientY: y, bubbles: true, cancelable: true }));
   }
 
   /* ---------------- projection & picking ---------------- */
@@ -741,7 +758,7 @@ export class Viewport {
   }
 
   refreshTheme() {
-    this.C = colors3d();
+    this.C = colors3d(this.store?.view?.background);
     this.dirty('model');
   }
 }

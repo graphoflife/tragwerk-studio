@@ -6,53 +6,100 @@ import { unitLabel } from '../../core/units.js';
 import { openSections, openMaterials } from './manage.js';
 
 const ELEMENT_TYPES = [
-  { value: 'beam', label: 'Balken', icon: 'beam', d: 'Biegesteifer Stab mit 6 Freiheitsgraden je Knoten' },
   { value: 'truss', label: 'Fachwerkstab', icon: 'truss', d: 'Nur Normalkraft, gelenkig angeschlossen' },
+  { value: 'beam', label: 'Balken', icon: 'beam', d: 'Biegesteifer Stab mit 6 Freiheitsgraden je Knoten' },
   { value: 'rib', label: 'Rippe', icon: 'rib', d: 'Unterzug/Randbalken einer Platte' },
   { value: 'rigid', label: 'Starrstab', icon: 'rigid', d: 'Starre Kopplung zweier Knoten' },
   { value: 'spring', label: 'Feder', icon: 'spring', d: 'Federelement mit 6 Steifigkeiten' },
 ];
+// end release presets per member end (local axes): rigid, moment hinge (φy, φz free)
+const END_RELEASES = { rigid: [false, false, false, false, false, false], hinged: [false, false, false, false, true, true] };
+const endKind = (r) => (!r ? 'rigid' : r.every((x, k) => x === END_RELEASES.rigid[k]) ? 'rigid' : r.every((x, k) => x === END_RELEASES.hinged[k]) ? 'hinged' : 'custom');
 
-export function assignLineElement(app) {
+/**
+ * Line elements (AxisVM: Linienelemente): one dialog for the selected lines – element type, material,
+ * cross-section, rotation, eccentricity, end releases, tension/compression only, spring stiffnesses.
+ * types: element types offered (the Line elements button: truss, beam, rib).
+ */
+export function assignLineElement(app, { types = ['truss', 'beam', 'rib'] } = {}) {
   const st = app.store;
-  const first = [...st.selection.lines].map((id) => st.idx.lines.get(id)).find((l) => l.element)?.element;
-  const s = { type: first?.type || 'beam', material: first?.material, section: first?.section, beta: first?.beta || 0 };
+  const lines = [...st.selection.lines].map((id) => st.idx.lines.get(id));
+  const first = lines.find((l) => l.element && types.includes(l.element.type))?.element;
   const d = app.ensureDrawDefaults('beam');
-  s.material = s.material ?? d.material; s.section = s.section ?? d.section;
+  const s = {
+    type: first?.type || (types.includes('beam') ? 'beam' : types[0]), material: first?.material ?? d.material, section: first?.section ?? d.section,
+    beta: first?.beta || 0, nl: first?.nl || '', ecc: first?.ecc ?? null,
+    relI: endKind(first?.releases?.i), relJ: endKind(first?.releases?.j), k: [...(first?.k || [1e4, 1e4, 1e4, 0, 0, 0])],
+  };
   const body = h('div');
   const render = () => {
     clear(body);
-    const cards = h('div.cards');
-    for (const e of ELEMENT_TYPES) {
-      cards.appendChild(h('button.card-choice' + (s.type === e.value ? '.active' : ''), { onclick: () => { s.type = e.value; render(); } },
-        h('div.chip', ic(e.icon)), h('div.t', t(e.label)), h('div.d', t(e.d))));
+    const offered = ELEMENT_TYPES.filter((e) => types.includes(e.value));
+    if (offered.length > 1) {
+      const cards = h('div.cards');
+      for (const e of offered) {
+        cards.appendChild(h('button.card-choice' + (s.type === e.value ? '.active' : ''), { onclick: () => { s.type = e.value; render(); } },
+          h('div.chip', ic(e.icon)), h('div.t', t(e.label)), h('div.d', t(e.d))));
+      }
+      body.appendChild(cards);
     }
-    body.appendChild(cards);
     if (['beam', 'truss', 'rib'].includes(s.type)) {
       body.appendChild(h('h4', { style: { marginTop: '16px' } }, t('Eigenschaften')));
       body.appendChild(field(t('Material'), h('div.row', selectInput({ value: s.material, options: st.model.materials.map((m) => ({ value: m.id, label: m.name })), onChange: (v) => { s.material = +v; } }),
         h('button.icon-btn.sm', { onclick: () => openMaterials(app) }, ic('dots')))));
       body.appendChild(field(t('Querschnitt'), h('div.row', selectInput({ value: s.section, options: st.model.sections.map((x) => ({ value: x.id, label: x.name })), onChange: (v) => { s.section = +v; } }),
         h('button.icon-btn.sm', { onclick: () => openSections(app, (id) => { s.section = id; render(); }) }, ic('dots')))));
-      body.appendChild(field(t('Drehwinkel β'), numInput({ value: s.beta, q: 'angle', onChange: (v) => { s.beta = v || 0; } })));
+      body.appendChild(field(t('Drehwinkel β'), numInput({ value: s.beta, q: 'angle', onChange: (v) => { s.beta = v || 0; } }), { help: t('Drehung der lokalen Querschnittsachsen y/z um die Stabachse x.') }));
+    }
+    if (s.type === 'truss') {
+      body.appendChild(field(t('Nichtlinear'), selectInput({ value: s.nl, options: [{ value: '', label: t('Zug und Druck') }, { value: 'tension', label: t('Nur Zug (Seil/Verband)') }, { value: 'compression', label: t('Nur Druck') }], onChange: (v) => { s.nl = v; } }),
+        { help: t('Wirkt nur in der nichtlinearen Berechnung.') }));
+    }
+    if (s.type === 'beam' || s.type === 'rib') {
+      const eMode = s.ecc === 'auto' ? 'auto' : typeof s.ecc === 'number' && s.ecc ? 'value' : 'none';
+      body.appendChild(field(t('Exzentrizität'), segmented([{ value: 'none', label: t('keine') }, { value: 'auto', label: t('bündig oben') }, { value: 'value', label: t('Wert') }], eMode,
+        (v) => { s.ecc = v === 'none' ? null : v === 'auto' ? 'auto' : (typeof s.ecc === 'number' ? s.ecc : -0.2); render(); }, { full: true }), { stack: true }));
+      if (eMode === 'value') body.appendChild(field(t('Versatz lokal z'), numInput({ value: s.ecc, q: 'dim', onChange: (v) => { s.ecc = v ?? 0; } }), { help: t('Negativ = in −z (bei horizontalen Stäben nach unten).') }));
+      body.appendChild(h('h4', t('Endfreigaben')));
+      const relOpts = [{ value: 'rigid', label: t('biegesteif') }, { value: 'hinged', label: t('gelenkig') }];
+      const relSel = (key) => {
+        const opts = s[key] === 'custom' ? [...relOpts, { value: 'custom', label: t('benutzerdefiniert (beibehalten)') }] : relOpts;
+        return segmented(opts, s[key], (v) => { s[key] = v; }, { full: true });
+      };
+      body.appendChild(h('div.grid2', field(t('Anfang (Knoten i)'), relSel('relI'), { stack: true }), field(t('Ende (Knoten j)'), relSel('relJ'), { stack: true })));
+    }
+    if (s.type === 'spring') {
+      const labs = ['kX', 'kY', 'kZ', 'kφX', 'kφY', 'kφZ'];
+      body.appendChild(h('div.grid3', labs.map((lab, i) => field(lab, numInput({ value: s.k[i], q: i < 3 ? 'springK' : 'springR', min: 0, onChange: (v) => { s.k[i] = v || 0; } }), { stack: true }))));
     }
     body.appendChild(hintBox(t('Wird {n} gewählten Linien zugewiesen.', { n: st.selection.lines.size })));
   };
   render();
+  const title = types.length > 1 ? t('Linienelemente') : t(ELEMENT_TYPES.find((e) => e.value === types[0])?.label || 'Linienelemente');
   openDialog({
-    title: t('Stabelement zuweisen'), iconName: 'beam', mod: 'sky', size: 'wide', body,
-    buttons: [{ label: t('Abbrechen'), kind: 'ghost' }, { label: t('Zuweisen'), kind: 'primary', icon: 'check', onClick: () => {
-      st.commit(t('Stabelement zuweisen'), (m) => {
+    title, sub: t('{n} Linien', { n: lines.length }), iconName: ELEMENT_TYPES.find((e) => e.value === s.type)?.icon || 'beam', mod: 'sky', size: 'wide', body,
+    buttons: [{ label: t('Abbrechen'), kind: 'ghost' }, { label: 'OK', kind: 'primary', icon: 'check', onClick: () => {
+      st.commit(title, (m) => {
         for (const l of m.lines) {
           if (!st.selection.lines.has(l.id)) continue;
+          const prev = l.element;
           const el = defaultLineElement(s.type, s.material, s.section);
           if (['beam', 'truss', 'rib'].includes(s.type)) el.beta = s.beta;
-          if (l.element?.releases && el.releases && s.type !== 'truss') el.releases = l.element.releases;
-          if (l.element?.design) el.design = l.element.design;
+          if (s.type === 'truss' && s.nl) el.nl = s.nl;
+          if (s.type === 'beam' || s.type === 'rib') {
+            if (s.ecc != null) el.ecc = s.ecc;
+            const keep = prev?.releases;
+            el.releases = {
+              i: s.relI === 'custom' && keep ? [...keep.i] : [...END_RELEASES[s.relI === 'custom' ? 'rigid' : s.relI]],
+              j: s.relJ === 'custom' && keep ? [...keep.j] : [...END_RELEASES[s.relJ === 'custom' ? 'rigid' : s.relJ]],
+            };
+          }
+          if (s.type === 'spring') el.k = [...s.k];
+          if (prev?.design) el.design = prev.design;
+          if (prev?.divisions) el.divisions = prev.divisions;
           l.element = el;
         }
       });
-      toast(t('Element zugewiesen.'), 'ok');
     } }],
   });
 }

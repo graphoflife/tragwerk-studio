@@ -37,7 +37,6 @@ class Store {
       snapNodes: true,
       snapMid: true,
       snapLine: false,
-      ortho: false,
       selFilter: { nodes: true, lines: true, domains: true, supports: true, loads: true },
     };
     this.resultView = {
@@ -207,11 +206,12 @@ class Store {
     for (const k of SEL_KINDS) {
       for (const id of [...this.selection[k]]) if (!this.idx[k].has(id)) this.selection[k].delete(id);
     }
+    for (const id of [...this.selection.dbl]) if (!this.idx.nodes.has(id)) this.selection.dbl.delete(id);
   }
 
   select(sel, mode = 'replace') {
     const s = this.selection;
-    if (mode === 'replace') for (const k of SEL_KINDS) s[k].clear();
+    if (mode === 'replace') { for (const k of SEL_KINDS) s[k].clear(); s.dbl.clear(); }
     for (const k of SEL_KINDS) {
       for (const id of sel[k] || []) {
         if (mode === 'toggle') { if (s[k].has(id)) s[k].delete(id); else s[k].add(id); } else if (mode === 'remove') s[k].delete(id);
@@ -222,8 +222,18 @@ class Store {
   }
 
   clearSelection() {
-    if (!this.selCount()) return;
+    if (!this.selCount() && !this.selection.dbl.size) return;
     for (const k of SEL_KINDS) this.selection[k].clear();
+    this.selection.dbl.clear();
+    this.emit('selection');
+  }
+
+  // Alt+click: double-select nodes (they are selected as well)
+  toggleDouble(ids) {
+    for (const id of ids) {
+      if (this.selection.dbl.has(id)) this.selection.dbl.delete(id);
+      else { this.selection.dbl.add(id); this.selection.nodes.add(id); }
+    }
     this.emit('selection');
   }
 
@@ -264,7 +274,8 @@ class Store {
 
 // everything that can be picked in the viewport
 export const SEL_KINDS = ['nodes', 'lines', 'domains', 'supports', 'loads'];
-function emptySelection() { return Object.fromEntries(SEL_KINDS.map((k) => [k, new Set()])); }
+// dbl: double-selected nodes (AxisVM: Alt+click) – the nodes a copy connects with "nodes to connect: double selected"
+function emptySelection() { return { ...Object.fromEntries(SEL_KINDS.map((k) => [k, new Set()])), dbl: new Set() }; }
 
 function emptyResults() {
   // design: { rc, rcBeams, rcCols, punching, steel, timber, basis } – derived from static, cleared with it

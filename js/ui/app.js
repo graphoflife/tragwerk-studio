@@ -5,9 +5,9 @@ import { store } from '../core/store.js';
 import { createModel, nextId } from '../core/model.js';
 import { Viewport } from './viewport.js';
 import { Tools } from './tools.js';
-import { createCommands, RIBBON, MODULES } from './commands.js';
+import { createCommands, RIBBON, MODULES, TAB_KEYS } from './commands.js';
 import { renderSide } from './panels.js';
-import { paletteCss } from './vp-util.js';
+import { paletteCss, isDarkBackground } from './vp-util.js';
 import { fmt, fmtNum, toDisplay, unitLabel } from '../core/units.js';
 import { getLibraryMaterial } from '../lib/materials.js';
 import { getLibrarySection } from '../lib/sections.js';
@@ -15,9 +15,10 @@ import { importDXF, exportDXF } from '../io/dxf.js';
 import { welcomeDialog } from './dialogs/help.js';
 import { runStatic } from './dialogs/analysis.js';
 import { DEFAULT_PSI } from './dialogs/manage.js';
-import { defaultCaseKey, componentDef, DESIGN_COMPONENTS, DESIGN_FAMILIES, designComp, hasDesign } from './results-data.js';
+import { defaultCaseKey, componentDef, DESIGN_COMPONENTS, DESIGN_FAMILIES, designComp, hasDesign, caseLabel } from './results-data.js';
 import { probeResult } from './vp-results.js';
 import { renderParts } from './parts-ui.js';
+import { CoordWindow } from './coordwin.js';
 
 export class App {
   constructor(root) {
@@ -27,6 +28,8 @@ export class App {
     this.drawDefaults = { material: null, section: null, domainMaterial: null, thickness: 0.2, beamMaterial: null };
     this.cmds = createCommands(this);
     this.build();
+    try { store.view.background = localStorage.getItem('ts.bg') || 'auto'; } catch (e) { store.view.background = 'auto'; }
+    this.applyBackground();
     this.vp = new Viewport(this.vpEl, store);
     this.tools = new Tools(this);
     this.bind();
@@ -52,6 +55,7 @@ export class App {
     this.tabsEl = h('nav.tabs');
     const header = h('header.header',
       h('div.brand', { tip: ['Tragwerk Studio', t('3D-FEM für Tragwerke')] }, h('div.brand-logo', ic('logo')), h('div.brand-name', 'Tragwerk Studio')),
+      this.buildMenubar(),
       this.tabsEl,
       h('div.header-actions',
         this.modelNameEl,
@@ -72,10 +76,10 @@ export class App {
     this.legendEl.style.display = 'none';
     this.infoEl = h('div.vp-card');
     this.infoEl.style.display = 'none';
-    this.hintEl = h('div.vp-hint');
-    this.vpToolbar = h('div.vp-toolbar');
+    this.infoWin = h('div.vp-card.info-win'); // AxisVM: Infofenster
     this.emptyEl = h('div.vp-empty');
-    this.vpEl.append(this.vpToolbar, h('div.vp-overlay-tr', this.legendEl, this.infoEl), this.hintEl, this.emptyEl);
+    this.coordWin = new CoordWindow(h('div.vp-card.coord-win'), this);
+    this.vpEl.append(h('div.vp-overlay-tr', this.infoWin, this.legendEl, this.infoEl), this.emptyEl, this.coordWin.el);
     this.sideTabsEl = h('div.side-tabs');
     this.sideBody = h('div.side-body');
     this.sideEl = h('aside.side', this.sideTabsEl, this.sideBody);
@@ -86,20 +90,35 @@ export class App {
     if (narrow.matches) this.mainEl.classList.add('panel-hidden');
     narrow.addEventListener('change', (e) => this.mainEl.classList.toggle('panel-hidden', e.matches));
 
-    // status
-    this.coordsEl = h('div.coords');
+    // status: command line · status line with the instructions (AxisVM: Informationszeile) · speed buttons
     this.cmdInput = h('input', { placeholder: t('Koordinaten: x y z · @dx dy dz'), spellcheck: false });
-    this.statusToggles = h('div.row', { style: { gap: '2px' } });
-    this.statusMsg = h('div.msg');
+    this.statusToggles = h('div.speed');
+    this.hintEl = h('div.status-line');
     const status = h('footer.status',
-      this.coordsEl,
       h('div.cmd', ic('target'), this.cmdInput),
-      this.statusMsg,
-      h('div.spacer'),
+      this.hintEl,
       this.statusToggles);
     root.append(header, this.ribbonWrap, this.mainEl, status);
     this.buildRail();
-    this.buildVpToolbar();
+  }
+
+  // menu bar as in AxisVM: Datei · Editieren · Einstellungen · Ansichten · Fenster · Hilfe
+  buildMenubar() {
+    const C = this.cmds;
+    const it = (id) => ({ label: C[id].label, icon: C[id].icon, kbd: C[id].kbd, onClick: () => C[id].run() });
+    const side = (tab, label, iconName) => ({ label, icon: iconName, onClick: () => this.showSide(tab) });
+    const menus = [
+      [t('Datei'), () => [it('new'), it('open'), it('save'), it('examples'), 'sep', it('importDxf'), it('exportDxf'), it('screenshot'), 'sep', it('report'), it('modelInfo')]],
+      [t('Editieren'), () => [it('undo'), it('redo'), 'sep', it('selectAll'), it('invertSel'), it('delete'), 'sep', it('translate'), it('rotate'), it('mirror'), it('scale'), 'sep', it('tables'), it('report'), it('palette')]],
+      [t('Einstellungen'), () => [it('settings'), it('materials'), it('sections'), 'sep', it('codeEC'), it('codeSIA'), 'sep', it('lang'), it('theme')]],
+      [t('Ansichten'), () => [it('viewFront'), it('viewTop'), it('viewSide'), it('viewIso'), it('persp'), 'sep', it('zoomFit'), it('zoomIn'), it('zoomOut'), 'sep', it('renderWire'), it('renderSolid'), it('renderFull'), 'sep', it('displayOptions'), it('hideSel'), it('isolateSel'), it('showAll')]],
+      [t('Fenster'), () => [it('panel'), side('props', t('Eigenschaftseditor'), 'sliders'), side('model', t('Modell'), 'list'), side('results', t('Ergebnisse'), 'contour'), 'sep', it('parts'), it('storeys'), it('tables'), it('report')]],
+      [t('Hilfe'), () => [it('help'), it('welcome'), it('examples')]],
+    ];
+    return h('nav.menubar', menus.map(([label, items]) => {
+      const b = h('button.menu-btn', { dataset: { popanchor: '1' }, onclick: () => openMenu(b, items()) }, label);
+      return b;
+    }));
   }
 
   iconBtn(cmdId, cls) {
@@ -118,20 +137,54 @@ export class App {
     return b;
   }
 
+  // left icon bar in AxisVM order; groups open their tools as a flyout to the right
   buildRail() {
     const r = clear(this.railEl);
     const btn = (id) => this.cmdButton(id);
+    const fly = (iconName, label, ids) => {
+      const b = h('button.icon-btn.flyout', { dataset: { popanchor: '1' }, tip: [label, ids.map((id) => this.cmds[id].label).join(' · ')], onclick: () => {
+        const rr = b.getBoundingClientRect();
+        const bar = h('div.flyout-bar', ids.map((id) => { const x = this.cmdButton(id); x.addEventListener('click', () => closePopover()); return x; }));
+        openPopover({ x: rr.right + 6, y: rr.top }, bar);
+        this.refreshChrome();
+      } }, ic(iconName), h('span.fly-mark'));
+      b.dataset.fly = ids.join(' ');
+      return b;
+    };
+    const wp = h('button.icon-btn', { dataset: { popanchor: '1' }, tip: [t('Arbeitsebenen'), t('Zeichenebene XY, XZ oder YZ und ihr Abstand')], onclick: () => {
+      const rr = wp.getBoundingClientRect();
+      openPopover({ x: rr.right + 6, y: rr.top }, h('div', { style: { minWidth: '220px' } }, h('div.side-section-title', ic('plane'), t('Arbeitsebene')), this.customControl('workplane')));
+    } }, ic('plane'));
     const filterBtn = h('button.icon-btn', { dataset: { popanchor: '1' }, onclick: () => this.openSelFilter(filterBtn), tip: [t('Auswahlfilter'), t('Festlegen, welche Objekttypen ausgewählt werden können')] }, ic('filter'));
-    r.append(btn('toolSelect'), btn('toolOrbit'), h('div.sep-h'), filterBtn, btn('selectAll'), btn('invertSel'), h('div.sep-h'),
-      btn('hideSel'), btn('isolateSel'), btn('showAll'), this.partsBtn = btn('parts'), h('div.sep-h'), btn('toolMeasure'), btn('delete'), h('div.sep-h'), btn('tables'), btn('panel'));
+    r.append(btn('toolSelect'), filterBtn,
+      fly('zoomIn', t('Zoom'), ['zoomFit', 'zoomIn', 'zoomOut', 'toolOrbit']),
+      fly('viewIso', t('Ansichten'), ['viewFront', 'viewTop', 'viewSide', 'viewIso', 'persp']),
+      fly('solid', t('Darstellungsart'), ['renderWire', 'renderSolid', 'renderFull']),
+      fly('move', t('Transformationen'), ['translate', 'rotate', 'mirror', 'scale']),
+      wp,
+      fly('parallel', t('Geometriewerkzeuge'), ['geoParallel', 'geoPerp', 'geoBisector', 'geoIntersect', 'toolMeasure']),
+      this.partsBtn = btn('parts'), btn('toolSection'), btn('palette'), btn('displayOptions'), btn('modelInfo'),
+      h('div.sep-h'), btn('tables'), btn('panel'));
   }
 
-  buildVpToolbar() {
-    const tb = clear(this.vpToolbar);
-    const btn = (id) => this.cmdButton(id);
-    const disp = h('button.icon-btn', { dataset: { popanchor: '1' }, onclick: () => this.openDisplayOptions(disp), tip: [t('Darstellung'), t('Beschriftungen, Lasten, Lager, Achsen, Netz ein-/ausblenden')] }, ic('sliders'));
-    tb.append(btn('zoomFit'), h('div.sep-v'), btn('viewIso'), btn('viewTop'), btn('viewFront'), btn('viewSide'), btn('persp'), h('div.sep-v'),
-      btn('renderWire'), btn('renderSolid'), btn('renderFull'), h('div.sep-v'), disp, btn('screenshot'));
+  // geometry tools (left icon bar / Alt+P …) work on the point input of a running tool
+  geometryTool(op) {
+    const pi = this.tools.cur?.pi;
+    if (!pi) { toast(t('Geometriewerkzeuge wirken beim Zeichnen: zuerst z.B. Linie wählen und den Startpunkt setzen.'), 'info'); return; }
+    pi.startGeo(op);
+    this.tools.updateHint();
+  }
+
+  openObjectSnap(anchor) {
+    const v = store.view;
+    const row = (k, label, iconName) => {
+      const cb = h('input', { type: 'checkbox', checked: !!v[k] });
+      cb.addEventListener('change', () => store.setView({ [k]: cb.checked }));
+      return h('label.switch', cb, h('span.track'), h('span.grow', h('span.row', ic(iconName), label)));
+    };
+    const r = (anchor || this.statusToggles).getBoundingClientRect();
+    openPopover({ x: r.right - 220, y: r.top - 150 }, h('div', { style: { minWidth: '210px' } }, h('div.side-section-title', ic('magnet'), t('Objektfang')),
+      row('snapNodes', t('Knoten'), 'node'), row('snapMid', t('Linienmitte'), 'split'), row('snapLine', t('Auf Linie'), 'line')));
   }
 
   /* ---------------- rendering ---------------- */
@@ -242,6 +295,15 @@ export class App {
     return h('span');
   }
 
+  // Ctrl+PgUp / Ctrl+PgDn: previous / next load case
+  stepLoadCase(d) {
+    const lcs = store.model.loadCases;
+    if (!lcs.length) return;
+    const i = lcs.findIndex((lc) => lc.id === store.activeLC);
+    this.setActiveLC(lcs[(i + d + lcs.length) % lcs.length].id);
+    toast(t('Lastfall: {n}', { n: lcs[(i + d + lcs.length) % lcs.length].name }), 'info', 1200);
+  }
+
   setActiveLC(id) {
     store.activeLC = id;
     store.selection.loads.clear();
@@ -264,14 +326,22 @@ export class App {
     toast(t('Lastfall {n} angelegt und aktiviert.', { n: id }), 'ok');
   }
 
-  refreshChrome() {
-    const act = (root) => root.querySelectorAll('[data-cmd]').forEach((b) => {
+  // pressed / on state of the command buttons below root
+  markActive(root) {
+    root.querySelectorAll('[data-cmd]').forEach((b) => {
       const c = this.cmds[b.dataset.cmd];
       const on = !!c?.active?.();
       b.classList.toggle('active', on);
       if (c?.kind === 'toggle') b.setAttribute('aria-checked', String(on));
     });
-    act(this.ribbonEl); act(this.railEl); act(this.vpToolbar);
+  }
+
+  refreshChrome() {
+    const act = (root) => this.markActive(root);
+    act(this.ribbonEl); act(this.railEl); act(this.statusToggles); document.querySelectorAll('.flyout-bar').forEach(act);
+    // a flyout shows as active when one of its tools is
+    this.railEl.querySelectorAll('[data-fly]').forEach((b) => b.classList.toggle('active', b.dataset.fly.split(' ').some((id) => this.cmds[id]?.active?.())));
+    this.renderInfo();
     this.undoBtn.disabled = !store.undoStack.length;
     this.redoBtn.disabled = !store.redoStack.length;
     tip(this.undoBtn, t('Rückgängig'), store.undoStack.length ? store.undoStack[store.undoStack.length - 1].label : '', 'Ctrl+Z');
@@ -292,34 +362,52 @@ export class App {
     this.renderStatus();
   }
 
+  // speed buttons (AxisVM: Schnellschalter), bottom right
   renderStatus() {
     const v = store.view;
     const el = clear(this.statusToggles);
-    const tg = (label, iconName, on, onClick, desc, isToggle = true) => {
-      const b = h('button.status-btn' + (isToggle ? '.toggle' : '') + (on ? '.on' : ''), { onclick: onClick, tip: [label, isToggle ? `${desc} · ${t('Schalter: ein/aus')}` : desc] },
-        isToggle ? h('span.led') : ic(iconName), label);
-      el.appendChild(b);
-    };
-    tg(t('Raster'), 'grid', v.grid.snap, () => store.setView({ grid: { ...v.grid, snap: !v.grid.snap } }), t('Am Raster fangen'));
-    tg(t('Knoten'), 'node', v.snapNodes, () => store.setView({ snapNodes: !v.snapNodes }), t('An Knoten fangen'));
-    tg(t('Mitte'), 'split', v.snapMid, () => store.setView({ snapMid: !v.snapMid }), t('An Linienmitten fangen'));
-    tg(t('Linie'), 'line', v.snapLine, () => store.setView({ snapLine: !v.snapLine }), t('Am nächstgelegenen Punkt auf Linien fangen'));
-    tg(t('Ortho'), 'ortho', v.ortho, () => store.setView({ ortho: !v.ortho }), t('Nur achsparallel zeichnen (auch mit gedrückter Shift-Taste)'));
+    const sb = (id) => el.appendChild(this.cmdButton(id, 'icon-btn.speed-btn'));
+    const sep = () => el.appendChild(h('div.sep-v'));
+    ['autoIntersect', 'snapGrid', 'storeys', 'isolateSel', 'hideSel', 'showAll'].forEach(sb);
     if (v.parts.on.size) {
       el.appendChild(h('button.status-btn.parts-on', { onclick: () => this.openParts(this.partsBtn), tip: [t('Teilefilter aktiv'), t('Nur die angehakten Teile sind sichtbar – auch in den Ergebnissen. Klick: Teile bearbeiten')] },
         ic('layers'), t('Teile: {n}', { n: v.parts.on.size }), h('span', { style: { marginLeft: '4px', opacity: 0.7 }, onclick: (e) => { e.stopPropagation(); store.setParts([]); } }, '✕')));
     }
-    tg(`${v.workplane.plane} ${fmtNum(toDisplay('len', v.workplane.offset))} ${unitLabel('len')}`, 'plane', false, () => this.setTab('geometry'), t('Aktive Arbeitsebene'), false);
-    tg(store.model.settings.code === 'SIA' ? 'SIA' : 'Eurocode', store.model.settings.code === 'SIA' ? 'swiss' : 'eu', false, () => this.setTab(['rc', 'steel', 'timber'].includes(store.tab) ? store.tab : 'rc'), t('Aktive Normenfamilie'), false);
+    sep();
+    el.appendChild(h('button.status-btn', { onclick: () => this.setTab('geometry'), tip: [t('Aktive Arbeitsebene'), t('Zeichenebene, wenn sie nicht von der Seite gesehen wird')] }, ic('plane'), `${v.workplane.plane} ${fmtNum(toDisplay('len', v.workplane.offset))} ${unitLabel('len')}`));
+    sb('toolSection');
+    sep();
+    ['showMesh', 'showLoads', 'showSupports', 'showAxes', 'labelsNodes'].forEach(sb);
+    sep();
+    const snapBtn = this.cmdButton('objectSnap', 'icon-btn.speed-btn');
+    snapBtn.onclick = () => this.openObjectSnap(snapBtn);
+    el.appendChild(snapBtn);
+    el.appendChild(h('button.status-btn', { onclick: () => this.setTab(['rc', 'steel', 'timber'].includes(store.tab) ? store.tab : 'rc'), tip: [t('Aktive Normenfamilie')] },
+      ic(store.model.settings.code === 'SIA' ? 'swiss' : 'eu'), store.model.settings.code === 'SIA' ? 'SIA' : 'Eurocode'));
+    this.markActive(el);
   }
 
-  setHint(html) { this.hintEl.innerHTML = html ? `<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg><span>${html}</span>` : ''; }
-
-  setCoords(p) {
-    this.coordsEl.innerHTML = ['X', 'Y', 'Z'].map((a, i) => `<b>${a}</b>${fmtNum(toDisplay('len', p[i]), 5).padStart(1)}`).join('&nbsp;&nbsp;') + ` <span style="color:var(--text-3)">${unitLabel('len')}</span>`;
+  // info window (AxisVM: Infofenster): view, code, load case, parts, result component
+  renderInfo() {
+    if (!this.infoWin || !this.vp) return;
+    const rv = store.resultView, v = store.view;
+    const lc = store.idx.loadCases.get(store.activeLC);
+    const pl = this.vp.drawPlane(null);
+    const view = pl.view ? { XY: t('Draufsicht X-Y'), XZ: t('Vorderansicht X-Z'), YZ: t('Seitenansicht Y-Z') }[pl.key] : v.persp ? t('Perspektive') : t('Axonometrie');
+    const rows = [[t('Ansicht'), view], [t('Norm'), store.model.settings.code === 'SIA' ? 'SIA' : 'Eurocode'], [t('Lastfall'), lc?.name || '–']];
+    if (v.parts.on.size) rows.push([t('Teile'), String(v.parts.on.size)]);
+    if (this.statusNote && store.results.static) rows.push([t('Berechnung'), this.statusNote]);
+    if (rv.kind) rows.push([t('Ergebnis'), rv.kind === 'static' || rv.kind === 'spectrum' ? caseLabel(store, rv.caseKey) : t({ modal: 'Eigenschwingung', buckling: 'Knicken', rc: 'Bewehrung', steel: 'Stahlbemessung', timber: 'Holzbemessung' }[rv.kind] || rv.kind)]);
+    clear(this.infoWin).appendChild(h('div.kv', rows.flatMap(([a, b]) => [h('span', a), h('b', b)])));
   }
 
-  setStatus(msg) { this.statusMsg.textContent = msg || ''; }
+  setHint(html) {
+    this.hintEl.innerHTML = html || '';
+    this.hintEl.title = this.hintEl.textContent;
+  }
+
+  // last analysis message, shown in the info window
+  setStatus(msg) { this.statusNote = msg || ''; this.renderInfo(); }
 
   showSide(tab) {
     this.sideTab = tab;
@@ -516,7 +604,8 @@ export class App {
       cb.addEventListener('change', () => c.run());
       wrap.appendChild(h('label.switch', cb, h('span.track'), h('span.grow', h('span.row', ic(c.icon), c.label))));
     }
-    openPopover(anchor, wrap);
+    const r = this.vpEl.getBoundingClientRect();
+    openPopover(anchor || { x: r.left + 60, y: r.top + 60 }, wrap);
   }
 
   openContextMenu(at, hit) {
@@ -529,9 +618,9 @@ export class App {
       items.push({ label: t('Eigenschaften'), icon: 'sliders', onClick: () => this.showSide('props') });
       items.push({ label: t('Zoom auf Auswahl'), icon: 'zoomIn', onClick: () => this.zoomSelection() });
       items.push('sep');
-      if (store.geoCount()) items.push(it('toolMove'), it('toolCopy'), it('toolRotate'), it('move'), it('mirror'), 'sep');
+      if (store.geoCount()) items.push(it('translate'), it('rotate'), it('mirror'), it('scale'), 'sep');
       if (s.nodes.size) items.push(it('supNode'), it('loadNode'));
-      if (s.lines.size) items.push(it('assignLine'), it('releases'), it('split'), it('loadLine'), it('supLine'));
+      if (s.lines.size) items.push(it('lineElements'), it('releases'), it('split'), it('loadLine'), it('supLine'));
       if (s.domains.size) items.push(it('loadSurface'), it('supSurface'));
       items.push('sep', it('hideSel'), it('isolateSel'), 'sep', { ...it('delete'), danger: true });
     } else {
@@ -678,6 +767,18 @@ export class App {
     return th ? th === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
   }
 
+  // drawing background (AxisVM: white, black, light grey, dark grey) – 'auto' follows the theme
+  setBackground(bg) {
+    store.view.background = bg;
+    try { localStorage.setItem('ts.bg', bg); } catch (e) { /* ignore */ }
+    this.applyBackground();
+    this.vp.refreshTheme();
+  }
+  applyBackground() {
+    const bg = store.view.background;
+    if (bg && bg !== 'auto') { this.vpEl.dataset.bg = bg; this.vpEl.dataset.tone = isDarkBackground(bg) ? 'dark' : 'light'; } else { delete this.vpEl.dataset.bg; delete this.vpEl.dataset.tone; }
+  }
+
   toggleTheme() {
     const next = this.isDark() ? 'light' : 'dark';
     document.documentElement.dataset.theme = next;
@@ -738,16 +839,19 @@ export class App {
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!document.documentElement.dataset.theme) { this.vp.refreshTheme(); this.refreshChrome(); } });
 
     this.cmdInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { this.tools.coord(this.cmdInput.value); this.cmdInput.value = ''; }
+      if (e.key === 'Enter') { this.tools.typedPoint(this.cmdInput.value); this.cmdInput.value = ''; }
       if (e.key === 'Escape') { this.cmdInput.value = ''; this.cmdInput.blur(); }
       e.stopPropagation();
     });
 
+    // AxisVM keys: the commands' shortcuts, the tool letters of the active tab (TAB_KEYS) and a few extras
     const keymap = new Map();
-    for (const c of Object.values(this.cmds)) if (c.kbd) keymap.set(c.kbd.toUpperCase(), c);
+    for (const c of Object.values(this.cmds)) if (c.kbd && c.kbd !== c.tabKey) keymap.set(c.kbd.toUpperCase(), c);
+    keymap.set('CTRL+Z', this.cmds.undo);
     keymap.set('CTRL+SHIFT+Z', this.cmds.redo);
-    keymap.set('Z', this.cmds.zoomFit); // X/Y/Z are axis constraints only while a point is being entered
-    keymap.set('DELETE', this.cmds.delete);
+    keymap.set('*', this.cmds.selectAll); // Num*
+    keymap.set('SHIFT+*', this.cmds.selectAll);
+    keymap.set('DEL', this.cmds.delete);
     keymap.set('BACKSPACE', this.cmds.delete);
     keymap.set('?', this.cmds.help);
     keymap.set('SHIFT+?', this.cmds.help);
@@ -766,13 +870,19 @@ export class App {
       // active tools get the keys first (point input: X/Y/Z, B, typed coordinates, Enter, Tab …)
       if (this.tools.key(e)) { e.preventDefault(); return; }
       const name = e.key.length === 1 ? e.key.toUpperCase() : ({ Delete: 'Del' }[e.key] || e.key);
-      let combo = (e.ctrlKey || e.metaKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '') + name;
-      if (e.altKey && /^Digit[0-9]$/.test(e.code)) {
-        const m = MODULES[(+e.code.slice(5) || 10) - 1];
+      const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+      const combo = (e.ctrlKey || e.metaKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '') + name;
+      // tabs: Shift+F1 … (AxisVM), Alt+1 … as well
+      const fk = /^F(\d+)$/.exec(e.key);
+      if ((e.shiftKey && plain && fk) || (e.altKey && !e.ctrlKey && /^Digit[0-9]$/.test(e.code))) {
+        const m = MODULES[(fk ? +fk[1] : (+e.code.slice(5) || 10)) - 1];
         if (m) { e.preventDefault(); this.setTab(m.id); }
         return;
       }
-      let c = keymap.get(combo.toUpperCase());
+      if (plain && !e.shiftKey && e.key === ' ') { e.preventDefault(); this.lastCmd?.run(); return; } // repeat
+      if (plain && (e.key === '+' || e.key === '-')) { e.preventDefault(); this.vp.zoomStep(e.key === '+' ? 1 : -1); return; }
+      const tabCmd = plain && !e.shiftKey ? TAB_KEYS[store.tab]?.[name] : null;
+      let c = tabCmd ? this.cmds[tabCmd] : keymap.get(combo.toUpperCase());
       if (!c && e.key === 'Delete') c = this.cmds.delete;
       if (c) { e.preventDefault(); c.run(); }
     });

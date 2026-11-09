@@ -339,9 +339,11 @@ export function mergeNodes(model, tol = 1e-4) {
   return map.size;
 }
 
-// Apply a point transform to the selection. copies=0 → move in place; copies=n → n transformed copies
-// (each applying the transform cumulatively). connect → join original and copied nodes with lines.
-export function transformSelection(model, sel, xf, { copies = 0, connect = false, connectElement = null } = {}) {
+// Moves (copies = 0) or copies the selection with xf(p, k) for copy k = 1…copies (AxisVM: Verschieben,
+// Drehen, Spiegeln, Skalieren). connect: lines joining each node with its previous copy (connectNodes: only
+// these nodes); copyElements / copySupports / copyLoads: what the copies take over from the originals.
+// detach (moving): lines and domains outside the selection keep their nodes where they are.
+export function transformSelection(model, sel, xf, { copies = 0, connect = false, connectNodes = null, connectElement = null, copyElements = true, copySupports = true, copyLoads = true, detach = false } = {}) {
   const nodeIds = new Set(sel.nodes);
   const lines = model.lines.filter((l) => sel.lines.has(l.id));
   const domains = model.domains.filter((d) => sel.domains.has(d.id));
@@ -351,6 +353,17 @@ export function transformSelection(model, sel, xf, { copies = 0, connect = false
   const newSel = { nodes: new Set(), lines: new Set(), domains: new Set() };
 
   if (!copies) {
+    if (detach) {
+      // unselected lines/domains on a moving node get a node that stays at the old place
+      const stay = new Map();
+      const keep = (id) => {
+        if (!nodeIds.has(id)) return id;
+        if (!stay.has(id)) { const n = model.nodes.find((x) => x.id === id); const c = { ...n, id: nextId(model.nodes) }; model.nodes.push(c); stay.set(id, c.id); }
+        return stay.get(id);
+      };
+      for (const l of model.lines) if (!sel.lines.has(l.id)) { l.n1 = keep(l.n1); l.n2 = keep(l.n2); }
+      for (const d of model.domains) if (!sel.domains.has(d.id)) { d.nodes = d.nodes.map(keep); d.holes = (d.holes || []).map((hh) => hh.map(keep)); }
+    }
     for (const n of nodes) { const p = xf(P(n), 1); n.x = round(p[0]); n.y = round(p[1]); n.z = round(p[2]); }
     sel.nodes.forEach((x) => newSel.nodes.add(x)); sel.lines.forEach((x) => newSel.lines.add(x)); sel.domains.forEach((x) => newSel.domains.add(x));
     mergeNodes(model, 1e-6);
@@ -365,16 +378,16 @@ export function transformSelection(model, sel, xf, { copies = 0, connect = false
     }
     for (const n of nodes) {
       if (sel.nodes.has(n.id)) newSel.nodes.add(map.get(n.id));
-      for (const s of model.supports.filter((s) => s.type === 'node' && s.node === n.id && sel.nodes.has(n.id))) {
+      if (copySupports) for (const s of model.supports.filter((s) => s.type === 'node' && s.node === n.id && sel.nodes.has(n.id))) {
         if (!model.supports.some((x) => x.type === 'node' && x.node === map.get(n.id))) model.supports.push({ ...structuredClone(s), id: nextId(model.supports), node: map.get(n.id) });
       }
     }
     for (const l of lines) {
-      const id = addLine(model, map.get(l.n1), map.get(l.n2), l.element);
+      const id = addLine(model, map.get(l.n1), map.get(l.n2), copyElements ? l.element : null);
       if (id) {
         newSel.lines.add(id);
-        for (const s of model.supports.filter((s) => s.type === 'line' && s.line === l.id)) model.supports.push({ ...structuredClone(s), id: nextId(model.supports), line: id });
-        for (const ld of model.loads.filter((x) => x.line === l.id)) model.loads.push({ ...structuredClone(ld), id: nextId(model.loads), line: id });
+        if (copySupports) for (const s of model.supports.filter((s) => s.type === 'line' && s.line === l.id)) model.supports.push({ ...structuredClone(s), id: nextId(model.supports), line: id });
+        if (copyLoads) for (const ld of model.loads.filter((x) => x.line === l.id)) model.loads.push({ ...structuredClone(ld), id: nextId(model.loads), line: id });
       }
     }
     for (const d of domains) {
@@ -384,11 +397,12 @@ export function transformSelection(model, sel, xf, { copies = 0, connect = false
       nd.holes = (d.holes || []).map((hh) => hh.map((n) => map.get(n)));
       model.domains.push(nd);
       newSel.domains.add(nd.id);
-      for (const s of model.supports.filter((s) => s.type === 'surface' && s.domain === d.id)) model.supports.push({ ...structuredClone(s), id: nextId(model.supports), domain: nd.id });
-      for (const ld of model.loads.filter((x) => x.domain === d.id)) model.loads.push({ ...structuredClone(ld), id: nextId(model.loads), domain: nd.id });
+      if (copySupports) for (const s of model.supports.filter((s) => s.type === 'surface' && s.domain === d.id)) model.supports.push({ ...structuredClone(s), id: nextId(model.supports), domain: nd.id });
+      if (copyLoads) for (const ld of model.loads.filter((x) => x.domain === d.id)) model.loads.push({ ...structuredClone(ld), id: nextId(model.loads), domain: nd.id });
     }
     if (connect) {
       for (const n of nodes) {
+        if (connectNodes && !connectNodes.has(n.id)) continue;
         const a = prevMap.get(n.id), b = map.get(n.id);
         if (a !== b) { const id = addLine(model, a, b, connectElement); if (id) newSel.lines.add(id); }
       }

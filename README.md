@@ -46,20 +46,21 @@ Alternativ ohne Actions: *Source: Deploy from a branch*, Branch `main`, Ordner `
 
 ## Bedienung
 
-Die obere Leiste vereint Module, Datei-Menü (mit Modellname), Befehlssuche und Einstellungen; darunter liegen die Werkzeuge des aktiven Moduls als Symbolknöpfe (Name und Kürzel im Tooltip). **Schalter** (Ein/Aus, z.B. Lokale Achsen, Beschriftungen, Fangen) sind umrandet und tragen ein Kontrolllämpchen, das grün leuchtet, wenn sie eingeschaltet sind; aktive Werkzeuge erscheinen gedrückt.
+Die Bedienung folgt AxisVM: Menüzeile (*Datei · Editieren · Einstellungen · Ansichten · Fenster · Hilfe*), Register mit den Werkzeugen des Moduls (Geometrie, Elemente, Lasten, Netz, Statik, Knicken, Eigenschwingung, Bewehrung, Stahlbemessung, Holzbemessung), links die Symbolleiste mit Ausklappgruppen (Auswahl, Zoom, Ansichten, Darstellungsart, Transformationen, Arbeitsebenen, Geometriewerkzeuge, Teile, Schnittlinien, Suche, Darstellungsoptionen, Modellinfo), oben rechts das Infofenster, unten rechts Koordinatenfenster und Schnellschalter, unten die Informationszeile mit der Anleitung zum laufenden Befehl. Farben wie in AxisVM: Auswahl magenta, Fachwerkstäbe rot, Balken blau, Platten rot, Schalen grün, Scheiben blau; Hintergrund weiss, hellgrau, dunkelgrau oder schwarz (*Einstellungen*).
+
+**Befehle mit Auswahl:** Jeder Befehl, der Objekte braucht (Linienelemente, Lager, Lasten, Transformationen …), lässt sich in beide Richtungen bedienen: Objekte wählen, Befehl drücken → das Fenster öffnet sofort; oder Befehl drücken → die **Auswahl-Symbolleiste** erscheint (+ hinzufügen, − entfernen, ± umschalten, Alles, Vorherige, Teile, Filter), Objekte wählen, OK (Enter / Rechtsklick).
 
 | Aktion | Maus / Taste |
 |---|---|
-| Auswählen | Klick; Rechteck ziehen (→ Fenster, ← Kreuzen); `Shift` hinzufügen, `Ctrl` umschalten. Knoten, Linien/Stäbe, Flächen, **Lager und Lasten** (Pfeile des aktiven Lastfalls) sind einzeln wählbar; der Auswahlfilter links schränkt die Arten ein |
-| Löschen | `Entf`: bei gemischter Auswahl erscheint ein Dialog, in dem man wählt, welche Arten gelöscht werden (Knoten, Linien, Stäbe – ganz oder nur die Stabeigenschaft –, Flächen, Lager, Lasten) |
-| Ansicht drehen / verschieben / zoomen | rechte Maustaste / mittlere Maustaste / Mausrad (Touch: 1 bzw. 2 Finger) |
-| Zeichnen | `N` Knoten, `L` Linie, `B` Balken, `R` Rechteck, `P` Polygon, `A` Bogen, `M` Messen |
-| Verändern | `V` Verschieben, `K` Kopieren, `D` Drehen (interaktiv), `Shift+M` Mehrfach kopieren (Dialog), `Q` Auswahl |
-| Ansichten | `Z`/`Pos1` alles, `I` Iso, `T` oben, `F` vorne, `S` Seite, `C` Perspektive, `W` gerendert |
-| Bearbeiten | `Ctrl+Z`/`Ctrl+Y`, `Entf` löschen, `H` ausblenden, `Shift+H` isolieren, `Alt+H` alles zeigen |
-| Rechnen | `F5` linear, `Shift+F5` nichtlinear |
+| Auswählen | Klick; Fenster ziehen (→ nur ganz innen, ← auch geschnitten); `Shift` hinzufügen, `Ctrl` entfernen, `Alt` doppelt markieren (Knoten zum Verbinden beim Kopieren); `Num*` alles |
+| Verschieben mit der Maus | Knoten oder Linie anfassen und ziehen – gehört das Objekt zur Auswahl, wandert die ganze Auswahl mit; beim Ziehen Koordinaten tippen (`X 2 Enter`), `Esc` bricht ab |
+| Ansicht | Mausrad zoomt zum Cursor, Doppelklick Mausrad alles zeigen, mittlere Taste schwenken (`Ctrl` schneller), `Alt`+mittlere Taste drehen; `Ctrl+1` vorne (X-Z), `Ctrl+2` oben (X-Y), `Ctrl+3` Seite (Y-Z), `Ctrl+4` Perspektive, `Ctrl+W` alles, `+`/`−` Zoom, `Alt+F5/F6/F7` Draht/Flächen/gerendert |
+| Werkzeugbuchstaben | je Register: Geometrie `N` Knoten, `L` Linie, `R` Rechteck, `P` Polygon, `A` Bogen um Mittelpunkt, `B` Bogen durch 3 Punkte, `D` Linien teilen, `I` Schnittpunkte; Elemente `L` Linienelemente, `T` Knotenlager, `U` Linienlager, `D` Fläche, `H` Öffnung; Lasten `L` Lastfälle, `C` Kombinationen, `N` Knotenlast, `B` Einzellast, `J` Linienlast, `H`/`D` Flächenlast, `A`/`I` Punkt-/Linienlast auf Fläche, `P` Lastfläche, `G` Eigengewicht, `O`/`W` Schnee/Wind |
+| Transformationen | `Shift+T` Verschieben, `Shift+R` Drehen, `Shift+M` Spiegeln, `Shift+S` Skalieren: Methode (schrittweise, aufteilen, Abstand/Winkel, mehrfach, verschieben, abtrennen), N, Knoten zum Verbinden (keine, doppelmarkierte, alle), Elemente/Lasten kopieren – dann die Punkte im Modell anklicken |
+| Bearbeiten | `Alt+Backspace` rückgängig (auch `Ctrl+Z`), `Shift+Alt+Backspace` wiederholen, `Entf` löschen, `Ctrl+E` lokales System umkehren, `Ctrl+I` Auto-Schnitt, `Leertaste` letzten Befehl wiederholen |
+| Rechnen | `F5` linear |
+| Sonstiges | `S` Auswahl, `Ctrl+R` Ansicht drehen, `F4` Balken direkt zeichnen, `Shift+P` Teile, `F7` Geschosse, `F10` Bericht, `F12` Tabellen, `Ctrl+Y` Darstellungsoptionen, `Ctrl+L` Lasten, `M` Netz, `Ctrl+PgUp/PgDn` Lastfall, `Shift+F1…F10` Register, `Ctrl+K` Befehlssuche, `F1` Hilfe |
 | Ergebnisse abfragen | Mauszeiger über Stab/Fläche zeigt die Werte; **Doppelklick** in den Bemessungsmodulen öffnet die Berechnung im Detail (Stahl-/Holzstab: alle Nachweise; Betonbalken: Verläufe und Querschnitt; Platte: Wood-Armer-Momente und Bewehrung je Kombination) |
-| Sonstiges | `Shift+P` Teile, `Ctrl+K` Befehlssuche, `Shift+T` Tabellen, `Ctrl+P` Bericht, `Alt+1…9`, `Alt+0` Module, `F1` Hilfe |
 
 ### Teile und Geschosse
 
@@ -68,31 +69,31 @@ Wie in AxisVM lassen sich Modellteile gezielt ein- und ausblenden (Knopf **Teile
 - **Eigene Teile:** Elemente auswählen → *Aus Auswahl*. Auswahl hinzufügen/entfernen, umbenennen, löschen. Solange ein eigener Teil aktiv ist, landen neu gezeichnete Elemente automatisch darin.
 - **Geschosse:** *Erkennen* ermittelt die Höhenlagen aus horizontalen Flächen und Stützen. Ein Geschoss umfasst die Decke auf seiner Höhe und die Stützen und Wände darunter. Ein Klick setzt die Arbeitsebene auf das Geschoss.
 - **Logische Teile:** nach Material, Querschnitt und Elementtyp.
-- Angehakte Teile werden angezeigt (Vereinigung), nichts angehakt = alles sichtbar. Der Filter gilt auch für **Ergebnisse**: Farbskala, Extremwerte und Diagramme beziehen sich nur auf die sichtbaren Teile. *Alle zeigen* (`Alt+H`) bzw. das ✕ beim Statusleisten-Hinweis „Teile: n“ hebt den Filter auf; der Zoom *Alles zeigen* (`Pos1`/`Z`) passt auf die sichtbaren Teile ein.
+- Angehakte Teile werden angezeigt (Vereinigung), nichts angehakt = alles sichtbar. Der Filter gilt auch für **Ergebnisse**: Farbskala, Extremwerte und Diagramme beziehen sich nur auf die sichtbaren Teile. *Alle zeigen* (Schnellschalter) bzw. das ✕ beim Hinweis „Teile: n“ hebt den Filter auf; der Zoom *Alles zeigen* (`Ctrl+W`) passt auf die sichtbaren Teile ein.
 
 ### Schnittlinien
 
 Werkzeug **Schnittlinie** (Module Statik und Stahlbeton): zwei Punkte auf einer Fläche klicken (Punkte rasten auf der Fläche ein). Das Diagramm zeigt die aktuelle Flächenkomponente (z.B. mx, nx, eZ, vR, axb, vEd/vRd,c) entlang der Linie, auch über mehrere Flächen; Öffnungen bleiben als Lücke. In der Seitenleiste lassen sich Schnittlinien ein-/ausschalten, umbenennen und löschen; das **Diagrammfenster** zeigt den Verlauf, Max/Min mit Lage, das **Integral** (z.B. Gesamtmoment eines Plattenstreifens aus mx, Gesamtbewehrung aus axt) und exportiert die Werte als CSV.
 
-### Punkteingabe wie im CAD
+### Punkteingabe und Koordinatenfenster (wie AxisVM)
 
-Alle Werkzeuge, die einen Punkt brauchen (Zeichnen, Verschieben, Kopieren, Drehen, Messen), verwenden denselben Mechanismus. Eine Anzeige am Mauszeiger zeigt Fangpunkt, Achse, ΔX/ΔY/ΔZ und die getippte Eingabe.
+Alle Werkzeuge, die einen Punkt brauchen (Zeichnen, Transformationen, Ziehen, Messen), verwenden dieselbe Eingabe. Das **Koordinatenfenster** unten rechts zeigt X Y Z L und r a h des Cursors – mit dem Schalter **d** relativ zum relativen Ursprung (dX dY dZ dL), sonst absolut. Der relative Ursprung folgt jedem gesetzten Punkt.
 
 | Eingabe | Wirkung |
 |---|---|
-| Maus | Fangen an Knoten, Linienmitten, optional Linien (Statusleiste), sonst Raster der Arbeitsebene |
-| `X` / `Y` / `Z` | Auf globale Achse durch den Bezugspunkt beschränken. Fährt man dann einen Knoten oder eine Mitte an, wird dieser Punkt **auf die Achse projiziert** |
-| `Shift+X/Y/Z` | Auf die Ebene senkrecht zur Achse beschränken |
-| `B` | Anderen Bezugspunkt wählen – relative Eingaben und Achsen beziehen sich dann darauf |
-| `3` | Eine Zahl: Distanz entlang der Achse bzw. in Mausrichtung |
-| `2 0 1` | dx dy dz – relativ zum Bezugspunkt (beim ersten Punkt absolut) |
-| `#5 0 3` / `@2 0 0` | absolut bzw. relativ erzwingen |
-| `4 6` | zwei Werte = Koordinaten in der Arbeitsebene |
-| `@5<30` | polar: Länge 5, Winkel 30° in der Arbeitsebene |
-| `0 3 0 x4` | beim Kopieren: 4 Kopien mit diesem Abstand |
-| `Tab` / `Enter` / `Esc` | relativ↔absolut / bestätigen / Eingabe bzw. Achse löschen, dann abbrechen |
+| Maus | Fangen an Knoten, Linienmitten, optional Linien (Objektfang), sonst Raster der Zeichenebene. Wird die Arbeitsebene von der Seite gesehen (z.B. XY in der Vorderansicht), zeichnet man in der Ansichtsebene |
+| `X` / `Y` / `Z` | In das Feld springen und Wert tippen (Ausdrücke wie `2*3.5`, `cos(45)`); der nächste Buchstabe wechselt das Feld, `Enter` / `Leertaste` / Klick setzt den Punkt. Beispiel: `x 12 y 0 z 0 Enter` |
+| `Shift+Ctrl+L/R/A/H` | Felder L (Abstand), r, a (Winkel), h |
+| `Shift+D` / `Shift+E` | Kartesische / polare Felder relativ (d) oder absolut |
+| `Ctrl+Alt+X/Y/Z/L/R/A/H` | Feld sperren / entsperren – z.B. dY und dZ gesperrt: der Cursor läuft nur entlang X |
+| `Einfg` / `Alt+Shift` | relativen Ursprung auf den Cursor setzen |
+| `Shift` halten | Richtung in 15°-Schritten; über eine Linie gefahren: entlang der Linie; über einen Knoten: zum Knoten hin |
+| `Alt+P` / `Alt+V` | parallel / senkrecht zu einer Linie (Linie anklicken) |
+| `Alt+B` / `Alt+I` | Winkelhalbierende / Schnittpunkt zweier Linien |
+| `2 0 1` · `#5 0 3` · `@5<30` · `… *4` | freie Eingabe: dx dy dz, absolut, polar, Anzahl Kopien |
+| `Esc` | Eingabe löschen, einen Punkt zurück, dann Werkzeug beenden |
 
-**Beispiel:** Stütze wählen, `V`, Fusspunkt anklicken, `X` drücken, die Mitte eines anderen Trägers anfahren und klicken – die Stütze wird entlang X genau auf die Höhe dieser Mitte verschoben. Beim Drehen (`D`) Winkel tippen (`90`, `30 x11` für 11 Kopien) oder zwei Richtungen klicken; `Alt+X/Y/Z` wählt die Drehachse.
+**Beispiel:** Decke wählen, zwei Eckknoten mit `Alt`+Klick doppelt markieren, `Shift+T`, Methode *Schrittweise*, N = 3, Knoten zum Verbinden *Doppelmarkierte*, Verbindung als *Balken*, OK, Startpunkt anklicken, `z 3 Enter` – drei Decken übereinander mit Stützen an den markierten Ecken.
 
 ## Einheiten und Konventionen
 

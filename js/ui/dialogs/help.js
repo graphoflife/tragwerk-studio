@@ -1,7 +1,7 @@
 // Welcome screen, keyboard/mouse help and example models.
 import { t } from '../../i18n.js';
 import { h, ic, openDialog, toast, checkInput } from '../dom.js';
-import { MODULES } from '../commands.js';
+import { MODULES, TAB_KEYS } from '../commands.js';
 import { EXAMPLES } from '../../examples.js';
 import { pointKeys } from '../pointinput.js';
 
@@ -82,31 +82,37 @@ export function examplesDialog(app) {
 
 export function shortcutsDialog(app) {
   const groups = {};
-  for (const c of Object.values(app.cmds)) if (c.kbd) (groups.k = groups.k || []).push(c);
+  for (const c of Object.values(app.cmds)) if (c.kbd && c.kbd !== c.tabKey) (groups.k = groups.k || []).push(c);
+  // tool letters of the tabs (AxisVM: per tab), e.g. Elemente: L = Linienelemente
+  const tabKeys = Object.entries(TAB_KEYS).map(([tab, map]) => [t(MODULES.find((m) => m.id === tab)?.label || tab),
+    [...new Set(Object.values(map))].map((id) => `${Object.keys(map).filter((k) => map[k] === id).join('/')} ${app.cmds[id].label}`).join(' · ')]);
   const mouse = [
-    [t('Linke Maustaste'), t('Auswählen, Zeichnen; Ziehen = Rechteckauswahl (→ Fenster, ← Kreuzen)')],
-    [t('Rechte Maustaste ziehen'), t('Ansicht drehen (Orbit)')],
-    [t('Mittlere Maustaste ziehen'), t('Ansicht verschieben (Pan)')],
-    [t('Mausrad'), t('Zoom zum Mauszeiger')],
-    [t('Alt + linke Maustaste'), t('Ansicht drehen')],
-    [t('Shift / Ctrl + Klick'), t('Zur Auswahl hinzufügen / umschalten')],
-    [t('Rechtsklick'), t('Kontextmenü bzw. Zeichenkette beenden')],
-    [t('Doppelklick'), t('Objekt auswählen und Eigenschaften zeigen')],
+    [t('Linke Maustaste'), t('Auswählen, Zeichnen; Ziehen = Fenster (→ innen, ← kreuzend); Knoten/Linie ziehen = verschieben')],
+    [t('Shift / Ctrl + Klick'), t('Zur Auswahl hinzufügen / aus der Auswahl entfernen')],
+    [t('Alt + Klick'), t('Knoten doppelt markieren (Knoten zum Verbinden beim Kopieren)')],
+    [t('Mittlere Maustaste ziehen'), t('Ansicht verschieben (Ctrl: schneller)')],
+    [t('Alt + mittlere Maustaste'), t('Ansicht drehen')],
+    [t('Rechte Maustaste ziehen'), t('Ansicht drehen')],
+    [t('Mausrad · Doppelklick Mausrad'), t('Zoom zum Mauszeiger · alles zeigen')],
+    [t('Rechtsklick'), t('Kontextmenü; beim Zeichnen: Kette beenden')],
+    [t('Leertaste'), t('Letzten Befehl wiederholen')],
   ];
   const body = h('div.grid2', { style: { alignItems: 'start', gap: '20px' } },
     h('div', h('h4', t('Maus')), h('div.list', mouse.map(([k, v]) => h('div.list-item', { style: { cursor: 'default', alignItems: 'flex-start' } }, h('b.small', { style: { minWidth: '150px' } }, k), h('span.small.muted', v)))),
-      h('h4', t('Punkteingabe (Zeichnen, Verschieben, Kopieren, Drehen)')),
+      h('h4', t('Punkteingabe und Koordinatenfenster')),
       h('div.list', pointKeys().map(([k, v]) => h('div.list-item', { style: { cursor: 'default', alignItems: 'flex-start' } }, h('span.kbd', { style: { flex: 'none', minWidth: '96px', justifyContent: 'center' } }, k), h('span.small.muted', v))))),
-    h('div', h('h4', t('Tastenkürzel')), h('div.list', (groups.k || []).map((c) => h('div.list-item', { style: { cursor: 'default' } }, ic(c.icon), h('span.small', c.label), h('span.kbd', { style: { marginLeft: 'auto' } }, c.kbd))))));
+    h('div', h('h4', t('Tastenkürzel')), h('div.list', (groups.k || []).map((c) => h('div.list-item', { style: { cursor: 'default' } }, ic(c.icon), h('span.small', c.label), h('span.kbd', { style: { marginLeft: 'auto' } }, c.kbd)))),
+      h('h4', t('Werkzeugbuchstaben je Register')),
+      h('div.list', tabKeys.map(([k, v]) => h('div.list-item', { style: { cursor: 'default', alignItems: 'flex-start' } }, h('b.small', { style: { minWidth: '90px' } }, k), h('span.small.muted', v))))));
   const intro = h('div',
     h('h4', t('Arbeitsablauf')),
     h('ol.small', { style: { color: 'var(--text-2)', lineHeight: 1.7, marginTop: 0 } },
       h('li', t('Geometrie zeichnen (Linie, Rechteck, Polygon) oder mit dem Generator erzeugen.')),
-      h('li', t('Elemente: Material und Querschnitt zuweisen, Flächen definieren, Lager setzen.')),
+      h('li', t('Elemente: Linien wählen und Linienelemente drücken (oder umgekehrt: Befehl, dann wählen, OK) – Material, Querschnitt, Gelenke; Flächen definieren, Lager setzen.')),
       h('li', t('Lasten: Lastfälle anlegen, Lasten auf ausgewählte Objekte aufbringen, Kombinationen erzeugen.')),
       h('li', t('Statik: Linear rechnen – das FE-Netz wird automatisch erzeugt.')),
       h('li', t('Ergebnisse in der rechten Leiste wählen: Verformung, Schnittgrössen, Spannungen.')),
-      h('li', t('Bemessung nach Eurocode oder SIA in den Modulen Stahlbeton, Stahl und Holz – Doppelklick auf ein Ergebnis zeigt die Berechnung im Detail.')),
+      h('li', t('Bemessung nach Eurocode oder SIA in den Registern Bewehrung, Stahlbemessung und Holzbemessung – Doppelklick auf ein Ergebnis zeigt die Berechnung im Detail.')),
       h('li', t('Bericht erstellen.'))));
   openDialog({ title: t('Hilfe & Tastenkürzel'), iconName: 'keyboard', mod: 'slate', size: 'xwide', body: h('div', intro, body), buttons: [{ label: t('Schliessen'), kind: 'primary' }] }).el.style.height = 'auto';
 }

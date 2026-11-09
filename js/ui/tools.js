@@ -2,13 +2,13 @@
 // (snaps, X/Y/Z constraints with projection, reference point, typed coordinates).
 import { t } from '../i18n.js';
 import { h, toast } from './dom.js';
-import { addNode, addLine, addDomain, V, P, defaultLineElement, transformSelection, rotatePoint, centroid } from '../core/model.js';
+import { addNode, addLine, addDomain, V, P, defaultLineElement, transformSelection, rotatePoint, centroid, intersectLines } from '../core/model.js';
 import { domainFrame } from '../mesh/geom.js';
 import { PLANES } from './vp-util.js';
-import { fmt } from '../core/units.js';
+import { fmt, fmtNum } from '../core/units.js';
 import { PointInput, POINT_KEYS_HINT } from './pointinput.js';
 import { surfaceLoadAtDialog } from './dialogs/loads.js';
-import { openResult } from './vp-results.js';
+import { SelectTool, PickTool } from './selection-tools.js';
 
 export class Tools {
   constructor(app) {
@@ -22,7 +22,10 @@ export class Tools {
     this.hud = h('div.pi-hud');
     this.hud.style.display = 'none';
     this.vp.el.appendChild(this.hud);
-    this.lastPoint = null;
+    // relative origin (follows every placed point, Insert moves it to the cursor) and the coordinate window
+    // switches: d = relative, locked fields [[field, value]]
+    this.relOrigin = [0, 0, 0];
+    this.coord = { dCart: true, dPolar: true, locks: [] };
     this.set('select');
   }
 
@@ -41,16 +44,23 @@ export class Tools {
     this.vp.canvas.style.cursor = id === 'select' ? 'default' : id === 'orbit' ? 'grab' : 'crosshair';
     this.store.emit('tool', { id, opts });
     this.updateHint();
+    if (!this.cur.pi) this.renderCoords(); // no typing state left in the coordinate window
   }
 
-  isDrawing() { return this.id !== 'select' && this.id !== 'orbit'; }
+  // a tool that enters points (the selection request only selects)
+  isDrawing() { return !['select', 'orbit', 'pick'].includes(this.id); }
   updateHint() { this.app.setHint(this.cur?.hint?.() || ''); }
 
   down(e) { this.cur.down?.(e); }
   move(e, dragging) {
-    const p = this.vp.workplanePoint(e.x, e.y);
-    if (p) this.app.setCoords(p);
+    this.lastMouse = e;
     this.cur.move?.(e, dragging);
+    // without a point input the coordinate window shows the cursor on the drawing plane
+    if (!this.cur.pi) { this.cursor = this.vp.workplanePoint(e.x, e.y, this.relOrigin) || this.cursor; this.renderCoords(); }
+  }
+  renderCoords() {
+    if (this.cur.pi) { this.cur.pi.refresh(); return; }
+    if (this.cursor) this.app.coordWin.render({ p: this.cursor, origin: this.relOrigin, plane: this.vp.drawPlane(this.relOrigin).key, flags: this.coord, locks: this.coord.locks });
   }
   up(e, moved) { this.cur.up?.(e, moved); this.updateHint(); }
   context(e) { this.cur.context?.(e); this.updateHint(); }
@@ -61,6 +71,17 @@ export class Tools {
   key(e) {
     if (this.cur.key?.(e)) { this.updateHint(); return true; }
     if (this.cur.pi?.key(e)) { this.updateHint(); return true; }
+    // relative origin and "d" switches also without a running point input
+    if (!this.cur.pi && (e.key === 'Insert' || (e.key === 'Shift' && e.altKey) || (e.key === 'Alt' && e.shiftKey))) {
+      if (this.cursor) { this.relOrigin = this.cursor; this.renderCoords(); }
+      return true;
+    }
+    if (!this.cur.pi && e.shiftKey && !e.ctrlKey && !e.altKey && (e.code === 'KeyD' || e.code === 'KeyE')) {
+      const k = e.code === 'KeyD' ? 'dCart' : 'dPolar';
+      this.coord[k] = !this.coord[k];
+      this.renderCoords();
+      return true;
+    }
     if (e.key === 'Escape') {
       if (this.cur.escape?.()) { this.updateHint(); return true; }
       if (this.id !== 'select') { this.set('select'); return true; }
@@ -72,68 +93,10 @@ export class Tools {
   }
 
   // typed coordinates from the status bar input
-  coord(text) {
+  typedPoint(text) {
     if (!text.trim()) return;
     if (this.cur.pi) { this.cur.pi.submit(text); this.updateHint(); return; }
     toast(t('Wähle zuerst ein Werkzeug, das einen Punkt erwartet (z.B. Linie oder Verschieben).'), 'info');
-  }
-}
-
-/* ---------------- selection ---------------- */
-class SelectTool {
-  constructor(tools) { this.T = tools; this.start = null; }
-  hint() {
-    const n = this.T.store.selCount();
-    if (n && this.T.store.geoCount()) return t('<b>{n}</b> Objekte ausgewählt · <b>V</b> verschieben · <b>K</b> kopieren · <b>D</b> drehen · <b>Entf</b> löschen · <b>Rechtsklick</b> Menü', { n });
-    if (n) return t('<b>{n}</b> Lager/Lasten ausgewählt · Werte rechts bearbeiten · <b>Entf</b> löschen', { n });
-    return t('<b>Klicken</b> zum Auswählen · <b>Ziehen</b> für Rechteckauswahl (→ Fenster, ← Kreuzen) · <b>Rechts ziehen</b> drehen · <b>Mitte ziehen</b> verschieben · <b>Mausrad</b> zoomen');
-  }
-  down(e) { this.start = e; }
-  move(e, dragging) {
-    const T = this.T;
-    if (dragging && this.start) {
-      const dx = e.x - this.start.x, dy = e.y - this.start.y;
-      if (Math.hypot(dx, dy) > 4) {
-        const b = T.selbox;
-        b.style.display = 'block';
-        b.style.left = Math.min(e.x, this.start.x) + 'px';
-        b.style.top = Math.min(e.y, this.start.y) + 'px';
-        b.style.width = Math.abs(dx) + 'px';
-        b.style.height = Math.abs(dy) + 'px';
-        b.classList.toggle('crossing', dx < 0);
-      }
-      return;
-    }
-    const hit = T.vp.pick(e.x, e.y, T.store.view.selFilter);
-    T.vp.setHover(hit);
-    T.vp.canvas.style.cursor = hit ? 'pointer' : (T.id === 'select' ? 'default' : 'crosshair');
-    T.app.showHoverInfo?.(hit, e);
-  }
-  up(e, moved) {
-    const T = this.T, st = T.store;
-    const mode = e.shift ? 'add' : e.ctrl ? 'toggle' : 'replace';
-    if (moved && this.start) {
-      T.selbox.style.display = 'none';
-      const crossing = e.x < this.start.x;
-      const sel = T.vp.boxSelect(this.start.x, this.start.y, e.x, e.y, crossing, st.view.selFilter);
-      st.select(sel, e.ctrl ? 'remove' : mode === 'replace' ? 'replace' : 'add');
-    } else {
-      const hit = T.vp.pick(e.x, e.y, st.view.selFilter);
-      if (hit) st.select({ [hit.kind + 's']: [hit.id] }, mode);
-      else if (mode === 'replace') st.clearSelection();
-    }
-    this.start = null;
-  }
-  context(e) {
-    const T = this.T, st = T.store;
-    const hit = T.vp.pick(e.x, e.y, st.view.selFilter);
-    if (hit && !st.selection[hit.kind + 's'].has(hit.id)) st.select({ [hit.kind + 's']: [hit.id] }, 'replace');
-    T.app.openContextMenu({ x: e.cx, y: e.cy }, hit);
-  }
-  dblclick(e) {
-    const hit = this.T.vp.pick(e.x, e.y, this.T.store.view.selFilter);
-    if (openResult(this.T.app, hit)) return;
-    if (hit) { this.T.store.select({ [hit.kind + 's']: [hit.id] }, 'replace'); this.T.app.showSide('props'); }
   }
 }
 
@@ -151,14 +114,15 @@ class DrawBase {
     this.newInput();
   }
   lastPoint() { return this.pts[this.pts.length - 1]; }
+  // relative origin for the next point (the last placed one)
+  refPoint() { return this.lastPoint(); }
   prompt() { return t('Punkt'); }
   newInput() {
     this.pi?.dispose();
     this.pi = new PointInput(this.T, {
       prompt: this.prompt(),
-      ref: this.lastPoint() || this.T.lastPoint || null,
-      relative: this.pts.length > 0,
-      onCommit: (p, info) => { this.addPoint(p, info); this.T.lastPoint = p; if (this.T.cur === this) { this.newInput(); this.preview(); } },
+      ref: this.refPoint() || null,
+      onCommit: (p, info) => { this.addPoint(p, info); if (this.T.cur === this) { this.newInput(); this.preview(); } },
       onPreview: () => this.preview(),
       onEnterEmpty: this.enterEmpty ? () => this.enterEmpty() : null,
       surface: !!this.surfaceSnap,
@@ -214,7 +178,7 @@ class LineTool extends DrawBase {
     if (a) {
       if (V.dist(a, p) < 1e-9) return;
       const el = this.element();
-      this.T.store.commit(this.opts.element ? t('Stab zeichnen') : t('Linie zeichnen'), (m) => addLine(m, addNode(m, a), addNode(m, p), el));
+      this.T.store.commit(this.opts.element ? t('Stab zeichnen') : t('Linie zeichnen'), (m) => { addLine(m, addNode(m, a), addNode(m, p), el); autoIntersect(this.T, m); });
       this.pts = [p];
     } else this.pts.push(p);
   }
@@ -275,10 +239,30 @@ class PolygonTool extends DrawBase {
   context() { if (this.pts.length >= 3) { this.close(); this.newInput(); this.preview(); } else if (!this.escape()) this.T.set('select'); }
 }
 
+// Arc through 3 points, or (opts.centre, AxisVM: Kreisbogen um Mittelpunkt) centre, start point and end angle
 class ArcTool extends DrawBase {
-  prompt() { return [t('Startpunkt'), t('Endpunkt'), t('Punkt auf dem Bogen')][this.pts.length]; }
+  prompt() {
+    return (this.opts.centre ? [t('Mittelpunkt'), t('Startpunkt'), t('Endpunkt')] : [t('Startpunkt'), t('Endpunkt'), t('Punkt auf dem Bogen')])[this.pts.length];
+  }
   stepHint() {
-    return [t('Startpunkt des Bogens'), t('Endpunkt des Bogens'), t('Punkt auf dem Bogen ({n} Segmente)', { n: this.opts.segments || 8 })][this.pts.length] || '';
+    const n = this.opts.segments || 8;
+    return (this.opts.centre
+      ? [t('Mittelpunkt des Bogens'), t('Startpunkt des Bogens (legt den Radius fest)'), t('Endwinkel des Bogens, gegen den Uhrzeigersinn ({n} Segmente)', { n })]
+      : [t('Startpunkt des Bogens'), t('Endpunkt des Bogens'), t('Punkt auf dem Bogen ({n} Segmente)', { n })])[this.pts.length] || '';
+  }
+  // the end angle is measured around the centre
+  refPoint() { return this.opts.centre ? this.pts[0] : super.refPoint(); }
+  points(a, b, c) { return this.opts.centre ? this.arcAround(a, b, c) : this.arcPoints(a, b, c); }
+  arcAround(ctr, a, b) {
+    const n = PLANES[this.T.vp.drawPlane(ctr).key].n;
+    const d = V.sub(a, ctr), e1v = V.sub(d, V.mul(n, V.dot(d, n)));
+    const r = V.len(e1v);
+    if (r < 1e-9) return null;
+    const e1 = V.mul(e1v, 1 / r), e2 = V.cross(n, e1), q = V.sub(b, ctr);
+    let span = Math.atan2(V.dot(q, e2), V.dot(q, e1));
+    if (span <= 1e-9) span += 2 * Math.PI;
+    const nSeg = this.opts.segments || 8, base = V.add(ctr, V.mul(n, V.dot(d, n)));
+    return Array.from({ length: nSeg + 1 }, (_, i) => V.add(base, V.add(V.mul(e1, r * Math.cos(span * i / nSeg)), V.mul(e2, r * Math.sin(span * i / nSeg)))));
   }
   arcPoints(a, b, c) {
     const ab = V.sub(b, a), ac = V.sub(c, a);
@@ -304,7 +288,7 @@ class ArcTool extends DrawBase {
     const segs = [];
     if (pts.length === 1 && c) segs.push([...pts[0], ...c]);
     if (pts.length === 2 && c) {
-      const arc = this.arcPoints(pts[0], pts[1], c);
+      const arc = this.points(pts[0], pts[1], c);
       if (arc) for (let i = 0; i < arc.length - 1; i++) segs.push([...arc[i], ...arc[i + 1]]);
     }
     return { segments: segs };
@@ -312,13 +296,14 @@ class ArcTool extends DrawBase {
   addPoint(p) {
     this.pts.push(p);
     if (this.pts.length < 3) return;
-    const arc = this.arcPoints(...this.pts);
+    const arc = this.points(...this.pts);
     this.pts = [];
-    if (!arc) { toast(t('Die drei Punkte liegen auf einer Geraden.'), 'warn'); return; }
+    if (!arc) { toast(this.opts.centre ? t('Der Startpunkt liegt im Mittelpunkt.') : t('Die drei Punkte liegen auf einer Geraden.'), 'warn'); return; }
     const el = this.element();
     this.T.store.commit(t('Bogen'), (m) => {
       const ids = arc.map((q) => addNode(m, q));
       for (let i = 0; i < ids.length - 1; i++) addLine(m, ids[i], ids[i + 1], el);
+      autoIntersect(this.T, m);
     });
   }
 }
@@ -413,28 +398,50 @@ function createPolygon(T, pts, opts, element) {
     } else {
       for (let i = 0; i < ids.length; i++) addLine(m, ids[i], ids[(i + 1) % ids.length], element);
     }
+    autoIntersect(T, m);
   });
 }
 
-/* ---------------- interactive transformations ---------------- */
-// Shared flow: (select objects) → base point → target point, with a live ghost of the result.
-class TransformBase {
+// Auto intersection (AxisVM: AutoSchnitt, Ctrl+I): split lines at crossings and at nodes on them
+function autoIntersect(T, m) { if (T.store.view.autoIntersect) intersectLines(m, null); }
+
+/* ---------------- geometric transformations (AxisVM: Verschieben, Drehen, Spiegeln, Skalieren) ---------------- */
+// After the options dialog (dialogs/transform.js) the defining points are picked in the model:
+//   translate  start and end of the vector              rotate  centre, start point, end point (axis ⟂ view)
+//   mirror     two points of the mirror plane (⟂ view)   scale   centre, reference point, its new place
+// opts: { kind, method, n, d, angle, h, connect: 'none' | 'double' | 'all', connectElement, copyElements, copyLoads }
+// Methods: move / detach / resize change the selection; copy makes one copy; incremental n copies, each one
+// step further; distribute n copies spread over the step; spread n copies at distance d / angle α;
+// consecutive / multiple ask for further steps until Esc. A drag (opts.drag) moves from the grabbed point
+// (opts.base) and drops on release.
+const PROMPTS = {
+  translate: () => [t('Startpunkt des Vektors'), t('Endpunkt des Vektors')],
+  rotate: () => [t('Drehpunkt'), t('Startpunkt des Bogens'), t('Endpunkt des Bogens')],
+  mirror: () => [t('Erster Punkt der Spiegelebene'), t('Zweiter Punkt der Spiegelebene')],
+  scale: () => [t('Zentrum'), t('Bezugspunkt'), t('Neue Lage des Bezugspunkts')],
+};
+const OP_LABEL = { translate: 'Verschieben', rotate: 'Drehen', mirror: 'Spiegeln', scale: 'Skalieren' };
+const copiesOf = (o) => (['move', 'detach', 'resize'].includes(o.method) ? 0 : ['copy', 'consecutive', 'multiple'].includes(o.method) ? 1 : Math.max(1, Math.round(o.n || 1)));
+const repeats = (o) => o.method === 'consecutive' || o.method === 'multiple';
+
+class TransformTool {
   constructor(tools, opts) {
     this.T = tools;
     this.store = tools.store;
-    this.opts = opts;
-    if (this.store.geoCount()) this.startBase();
-    else { this.phase = 'select'; this.sel = new SelectTool(tools); }
+    this.o = { kind: 'translate', method: 'move', n: 1, d: 1, angle: 90, h: 0, connect: 'none', copyElements: true, copyLoads: true, ...opts };
+    this.collect();
+    this.pts = opts.base ? [opts.base] : [];
+    this.newInput();
   }
-  label() { return ''; }
+  label() { return t(OP_LABEL[this.o.kind]); }
+  needed() { return this.o.kind === 'rotate' && this.o.method === 'spread' ? 1 : PROMPTS[this.o.kind]().length; }
   hint() {
-    if (this.phase === 'select') return t('{op}: Objekte wählen, dann <b>Enter</b> oder <b>Rechtsklick</b>', { op: this.label() });
-    return `${this.stepHint()} · ${POINT_KEYS_HINT()}`;
-  }
-  stepHint() {
-    return this.phase === 'base'
-      ? t('{op}: <b>Basispunkt</b> wählen · <b>Enter</b> = Schwerpunkt der Auswahl', { op: this.label() })
-      : t('{op}: <b>Zielpunkt</b> wählen oder Verschiebung tippen', { op: this.label() });
+    if (this.o.drag) return `${t('{op}: <b>loslassen</b> setzt ab · Fangpunkte und Achsen wie beim Zeichnen · <b>Esc</b> bricht ab', { op: this.label() })} · ${POINT_KEYS_HINT()}`;
+    const i = this.pts.length, k = this.o.kind;
+    const extra = i === 0 && k !== 'mirror' ? t('<b>Enter</b> = Schwerpunkt der Auswahl')
+      : i === 1 && k === 'rotate' ? t('<b>Enter</b> = Winkel α = {a}° aus dem Dialog', { a: this.o.angle }) : '';
+    const angle = this.angleNow != null ? ` · <b>α = ${fmtNum(this.angleNow, 2)}°</b>` : '';
+    return `${this.label()}: <b>${PROMPTS[k]()[i]}</b>${angle}${extra ? ' · ' + extra : ''} · ${POINT_KEYS_HINT()}`;
   }
   // nodes moved by the operation and the line segments to draw as ghost
   collect() {
@@ -447,216 +454,124 @@ class TransformBase {
     this.pts0 = [...ids].map((id) => P(idx.nodes.get(id)));
   }
   centroid() { return centroid(this.pts0).map((c) => Math.round(c * 1e6) / 1e6); }
-  startBase() {
-    this.collect();
-    this.phase = 'base';
-    this.base = null;
+  newInput() {
     this.pi?.dispose();
+    const i = this.pts.length, k = this.o.kind;
     this.pi = new PointInput(this.T, {
-      prompt: t('Basispunkt'), ref: null, relative: false,
-      onCommit: (p) => this.setBase(p), onPreview: () => this.preview(), onEnterEmpty: () => this.setBase(this.centroid()),
+      prompt: PROMPTS[k]()[i],
+      // rotation and scaling are measured from the centre, the vector from its start
+      ref: i ? (k === 'rotate' || k === 'scale' ? this.pts[0] : this.pts[i - 1]) : null,
+      planeThroughRef: i > 0,
+      onCommit: (p) => this.addPoint(p),
+      onPreview: () => this.preview(),
+      onEnterEmpty: i === 0 && k !== 'mirror' ? () => this.addPoint(this.centroid())
+        : i === 1 && k === 'rotate' ? () => this.apply(this.pts, this.o.angle) : null,
     });
     this.T.updateHint();
   }
-  setBase(p) {
-    this.base = p;
-    this.phase = 'target';
-    this.pi?.dispose();
-    this.pi = new PointInput(this.T, {
-      prompt: this.targetPrompt(), ref: p, relative: true, allowCopies: true,
-      onCommit: (q, info) => this.apply(q, info), onPreview: () => this.preview(),
-    });
-    this.T.updateHint();
-    this.preview();
+  addPoint(p) {
+    this.pts.push(p);
+    if (this.pts.length < this.needed()) { this.newInput(); this.preview(); return; }
+    this.apply(this.pts);
   }
-  targetPrompt() { return t('Zielpunkt'); }
-  // ghost: lines with moved endpoints transformed by xf
-  ghost(xf) {
-    if (!xf) return [];
+  axis(c) { return PLANES[this.T.vp.drawPlane(c).key].n; }
+  rotAngle(pts) {
+    const ax = this.axis(pts[0]);
+    const proj = (v) => V.sub(v, V.mul(ax, V.dot(v, ax)));
+    const v1 = proj(V.sub(pts[1], pts[0])), v2 = proj(V.sub(pts[2], pts[0]));
+    if (V.len(v1) < 1e-9 || V.len(v2) < 1e-9) return null;
+    return Math.atan2(V.dot(ax, V.cross(v1, v2)), V.dot(v1, v2)) * 180 / Math.PI;
+  }
+  // point transform xf(p, k) of copy k (k = 1 when moving); angle: rotation from the dialog
+  xf(pts, angle = null) {
+    const o = this.o, n = Math.max(1, Math.round(o.n || 1));
+    const amount = (k) => (o.method === 'distribute' ? k / n : k);
+    if (o.kind === 'translate') {
+      let v = V.sub(pts[1], pts[0]);
+      if (o.method === 'spread') { const L = V.len(v); if (L < 1e-12) return null; v = V.mul(v, o.d / L); }
+      return (p, k) => V.add(p, V.mul(v, amount(k)));
+    }
+    if (o.kind === 'rotate') {
+      const c = pts[0], ax = this.axis(c);
+      const deg = angle ?? (o.method === 'spread' ? o.angle : this.rotAngle(pts));
+      if (deg == null) return null;
+      return (p, k) => V.add(rotatePoint(p, c, ax, deg * Math.PI / 180 * amount(k)), V.mul(ax, (o.h || 0) * amount(k)));
+    }
+    if (o.kind === 'mirror') {
+      const m = V.cross(V.sub(pts[1], pts[0]), this.axis(pts[0]));
+      if (V.len(m) < 1e-12) return null;
+      const u = V.norm(m);
+      return (p) => V.sub(p, V.mul(u, 2 * V.dot(V.sub(p, pts[0]), u)));
+    }
+    // scale: factors from the coordinate ratios of the reference point and its new place
+    const c = pts[0], r = V.sub(pts[1], c), q = V.sub(pts[2], c);
+    const F = [0, 1, 2].map((i) => (Math.abs(r[i]) > 1e-9 ? q[i] / r[i] : 1));
+    const fac = (i, k) => (o.method === 'distribute' ? 1 + (F[i] - 1) * k / n : Math.pow(F[i], k));
+    return (p, k) => p.map((x, i) => c[i] + (x - c[i]) * fac(i, k));
+  }
+  // ghost: lines with moved endpoints transformed by f
+  ghost(f) {
     const { idx } = this.store;
     return this.ghostLines.map((l) => {
       const a = P(idx.nodes.get(l.n1)), b = P(idx.nodes.get(l.n2));
-      return [...(this.moving.has(l.n1) ? xf(a) : a), ...(this.moving.has(l.n2) ? xf(b) : b)];
+      return [...(this.moving.has(l.n1) ? f(a) : a), ...(this.moving.has(l.n2) ? f(b) : b)];
     });
   }
-  currentXf() {
-    const q = this.pi?.cur?.p;
-    if (this.phase !== 'target' || !q) return null;
-    const d = V.sub(q, this.base);
-    return (p) => V.add(p, d);
-  }
   preview() {
-    const d = this.pi.decor();
-    const q = this.pi.cur?.p;
-    const segs = this.phase === 'target' && q ? [[...this.base, ...q]] : [];
-    // typed "*n" previews every copy
-    let ghost = this.ghost(this.currentXf());
-    const n = this.phase === 'target' && q ? (this.pi.cur?.copies || 1) : 1;
-    if (n > 1) {
-      const dv = V.sub(q, this.base);
-      ghost = [];
-      for (let k = 1; k <= Math.min(n, 50); k++) ghost.push(...this.ghost((p) => V.add(p, V.mul(dv, k))));
-    }
-    this.T.vp.setToolPreview({ ghost, segments: segs, axes: d.axes, guides: d.guides, snap: d.snap, points: d.points });
+    const d = this.pi.decor(), q = this.pi.cur?.p;
+    const pts = q ? [...this.pts, q] : this.pts;
+    const segs = [];
+    const from = (i) => (this.o.kind === 'rotate' || this.o.kind === 'scale' ? pts[0] : pts[i - 1]);
+    for (let i = 1; i < pts.length; i++) segs.push([...from(i), ...pts[i]]);
+    let ghost = [];
+    this.angleNow = this.o.kind === 'rotate' && pts.length === 3 ? this.rotAngle(pts) : null;
+    const xf = pts.length >= this.needed() ? this.xf(pts) : null;
+    if (xf) for (let k = 1; k <= Math.min(Math.max(1, copiesOf(this.o)), 50); k++) ghost.push(...this.ghost((p) => xf(p, k)));
+    this.T.vp.setToolPreview({ ghost, segments: segs, axes: d.axes, guides: d.guides, snap: d.snap, points: [...this.pts, ...d.points] });
     this.T.updateHint();
   }
-  // selection phase delegates to the select tool
-  down(e) { if (this.phase === 'select') this.sel.down(e); }
-  move(e, dragging) { if (this.phase === 'select') this.sel.move(e, dragging); else this.pi.move(e); }
-  up(e, moved) { if (this.phase === 'select') this.sel.up(e, moved); else if (!moved) this.pi.click(e); }
-  enter() { if (this.phase === 'select' && this.store.geoCount()) this.startBase(); }
-  context(e) {
-    if (this.phase === 'select') { if (this.store.geoCount()) this.startBase(); else this.T.set('select'); return; }
-    if (!this.escape()) this.T.set('select');
-    void e;
+  apply(pts, angle = null) {
+    const o = this.o, xf = this.xf(pts, angle);
+    if (!xf) { toast(t('Die Punkte legen keine Transformation fest.'), 'warn'); this.pts = []; this.newInput(); return; }
+    const copies = copiesOf(o), sel = this.store.selection;
+    let el = null;
+    if (copies && o.connect !== 'none' && o.connectElement) {
+      const dd = this.T.app.ensureDrawDefaults(o.connectElement);
+      el = defaultLineElement(o.connectElement, dd.material, dd.section);
+    }
+    this.store.commit(this.label(), (m) => transformSelection(m, sel, xf, {
+      copies, connect: copies > 0 && o.connect !== 'none', connectNodes: o.connect === 'double' ? new Set(sel.dbl) : null, connectElement: el,
+      copyElements: o.copyElements, copySupports: o.copyElements, copyLoads: o.copyLoads, detach: o.method === 'detach',
+    }));
+    if (copies) toast(t('{n} Kopie(n) erstellt', { n: copies }), 'ok', 1800);
+    if (repeats(o)) { this.collect(); this.pts = []; this.newInput(); this.preview(); return; }
+    this.T.set('select');
   }
+  move(e) { this.pi.move(e); }
+  up(e, moved) {
+    if (this.o.drag && !this.released) {
+      // drop on release – unless coordinates are being typed: then Enter or a click drops
+      this.released = true;
+      if (this.pi.edit || this.pi.typed) return;
+      const q = this.pi.cur?.p;
+      if (q && V.dist(q, this.pts[0]) > 1e-12) this.addPoint(q); else this.T.set('select');
+      return;
+    }
+    if (!moved) this.pi.click(e);
+  }
+  context() { if (!this.escape()) this.T.set('select'); }
+  // Esc goes back one point (AxisVM: one level up), a drag is cancelled
   escape() {
-    if (this.phase === 'target') { this.startBase(); this.preview(); return true; }
-    return false;
-  }
-  translate(m, d, copies) {
-    return transformSelection(m, this.store.selection, (p, k) => V.add(p, V.mul(d, k)), { copies });
+    if (this.o.drag || !this.pts.length) { if (this.o.drag) this.T.set('select'); return !!this.o.drag; }
+    this.pts.pop();
+    this.newInput();
+    this.preview();
+    return true;
   }
   cancel() { this.pi?.dispose(); }
 }
 
-class MoveTool extends TransformBase {
-  label() { return t('Verschieben'); }
-  apply(q) {
-    const d = V.sub(q, this.base);
-    if (V.len(d) < 1e-12) return;
-    this.store.commit(t('Verschieben'), (m) => this.translate(m, d, 0));
-    toast(t('Verschoben um {d}', { d: fmt('len', V.len(d)) }), 'ok', 1800);
-    this.T.set('select');
-  }
-}
-
-class CopyTool extends TransformBase {
-  label() { return t('Kopieren'); }
-  targetPrompt() { return t('Zielpunkt der Kopie'); }
-  stepHint() {
-    return this.phase === 'target'
-      ? t('Kopieren: <b>Zielpunkt</b> · mehrfach klicken für weitere Kopien · <b>dx dy dz *n</b> für n Kopien · <b>Esc</b> beendet')
-      : super.stepHint();
-  }
-  apply(q, info) {
-    const d = V.sub(q, this.base);
-    if (V.len(d) < 1e-12) return;
-    const n = info.copies || 1;
-    let newSel;
-    this.store.commit(t('Kopieren'), (m) => { newSel = this.translate(m, d, n); });
-    this.count = (this.count || 0) + n;
-    toast(t('{n} Kopie(n) erstellt · weiter klicken oder Esc', { n: this.count }), 'ok', 1800);
-    void newSel;
-    // stay in target phase for further copies (from the same base point)
-    this.collect();
-    this.setBase(this.base);
-  }
-  escape() { if (this.phase === 'target' && this.count) { this.T.set('select'); return true; } return super.escape(); }
-}
-
-class RotateTool extends TransformBase {
-  label() { return t('Drehen'); }
-  constructor(tools, opts) {
-    const wp = tools.store.view.workplane.plane;
-    super(tools, opts);
-    this.axisKey = { XY: 'Z', XZ: 'Y', YZ: 'X' }[wp];
-  }
-  get axis() { return { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] }[this.axisKey || 'Z']; }
-  stepHint() {
-    const ax = t('Drehachse <b>{a}</b> (Alt+X/Y/Z)', { a: this.axisKey || 'Z' });
-    if (this.phase === 'base') return t('Drehen: <b>Drehpunkt</b> wählen · {ax}', { ax });
-    if (this.phase === 'target' && !this.refDir) return t('Drehen: <b>Winkel tippen</b> (z.B. 90) oder Referenzrichtung klicken · {ax}', { ax });
-    return t('Drehen: <b>Zielrichtung</b> klicken oder Winkel tippen · <b>Shift</b> 15°-Schritte · {ax}', { ax });
-  }
-  key(e) {
-    // Alt+X/Y/Z selects the rotation axis (plain X/Y/Z stay point constraints)
-    if (e.altKey && /^Key[XYZ]$/.test(e.code)) { this.axisKey = e.code.slice(3); this.preview(); return true; }
-    if (this.phase === 'target' && this.pi && !this.pi.constraint && /^[0-9.\-]$/.test(e.key) && !e.ctrlKey && !e.metaKey) {
-      this.angleText = (this.angleText || '') + e.key;
-      this.preview();
-      return true;
-    }
-    if (this.angleText) {
-      if (e.key === 'Backspace') { this.angleText = this.angleText.slice(0, -1); this.preview(); return true; }
-      if (e.key === ' ' || e.key === '*') { this.angleText += e.key; this.preview(); return true; }
-      if (e.key === 'Enter') { this.applyAngle(); return true; }
-      if (e.key === 'Escape') { this.angleText = ''; this.preview(); return true; }
-    }
-    return false;
-  }
-  parseAngle() {
-    const m = String(this.angleText || '').trim().match(/^(-?[\d.,]+)\s*(?:\*\s*(\d+))?$/);
-    if (!m) return null;
-    return { deg: parseFloat(m[1].replace(',', '.')), copies: m[2] ? parseInt(m[2], 10) : 0 };
-  }
-  angleFromPoint(q, snapStep) {
-    if (!q || !this.refDir) return null;
-    const a = this.axis;
-    const proj = (v) => V.sub(v, V.mul(a, V.dot(v, a)));
-    const v1 = proj(this.refDir), v2 = proj(V.sub(q, this.base));
-    if (V.len(v1) < 1e-9 || V.len(v2) < 1e-9) return null;
-    let deg = Math.atan2(V.dot(a, V.cross(v1, v2)), V.dot(v1, v2)) * 180 / Math.PI;
-    if (snapStep) deg = Math.round(deg / snapStep) * snapStep;
-    return deg;
-  }
-  currentAngle() {
-    const pa = this.parseAngle();
-    if (pa) return pa.deg;
-    return this.angleFromPoint(this.pi?.cur?.p, this.pi?.mouse?.shift ? 15 : 0);
-  }
-  currentXf() {
-    if (this.phase !== 'target') return null;
-    const deg = this.currentAngle();
-    if (deg == null) return null;
-    return (p) => rotatePoint(p, this.base, this.axis, deg * Math.PI / 180);
-  }
-  preview() {
-    super.preview();
-    if (this.phase !== 'target') return;
-    const deg = this.currentAngle();
-    const L = (this.T.vp.bounds?.size || 10) * 3;
-    const axes = [{ a: V.sub(this.base, V.mul(this.axis, L)), b: V.add(this.base, V.mul(this.axis, L)), color: this.T.vp.C[`axis${this.axisKey || 'Z'}`] }];
-    const d = this.pi.decor();
-    const segs = [];
-    if (this.refDir) segs.push([...this.base, ...V.add(this.base, this.refDir)]);
-    if (this.pi.cur?.p && !this.angleText) segs.push([...this.base, ...this.pi.cur.p]);
-    this.T.vp.setToolPreview({ ghost: this.ghost(this.currentXf()), segments: segs, axes: [...axes, ...d.axes], guides: d.guides, snap: d.snap, points: d.points });
-    if (deg != null) this.T.app.setHint(`${this.stepHint()} · <b>${t('Winkel')} ${(Math.round(deg * 100) / 100)}°</b>${this.angleText ? ` · ${t('Enter bestätigt')}` : ''}`);
-  }
-  apply(q, info) {
-    if (!this.refDir) {
-      // first click in the target phase defines the reference direction
-      const d = V.sub(q, this.base);
-      if (V.len(d) < 1e-9) return;
-      this.refDir = d;
-      this.pi.cur = null;
-      this.preview();
-      return;
-    }
-    const deg = this.angleFromPoint(q, this.pi.mouse?.shift ? 15 : 0);
-    if (deg == null) return;
-    this.rotate(deg, info.copies > 1 ? info.copies : 0);
-  }
-  applyAngle() {
-    const pa = this.parseAngle();
-    if (!pa) { toast(t('Winkel in Grad eingeben, z.B. 90 oder 30 *11 für 11 Kopien'), 'warn'); return; }
-    this.rotate(pa.deg, pa.copies);
-  }
-  rotate(deg, copies) {
-    const ang = deg * Math.PI / 180;
-    this.store.commit(t('Drehen'), (m) => transformSelection(m, this.store.selection, (p, k) => rotatePoint(p, this.base, this.axis, ang * k), { copies }));
-    toast(copies ? t('{n} gedrehte Kopien erstellt ({d}°)', { n: copies, d: deg }) : t('Gedreht um {d}°', { d: deg }), 'ok', 1800);
-    this.T.set('select');
-  }
-  escape() {
-    if (this.angleText) { this.angleText = ''; this.preview(); return true; }
-    if (this.refDir) { this.refDir = null; this.preview(); return true; }
-    return super.escape();
-  }
-}
-
 const TOOLS = {
-  select: SelectTool, orbit: OrbitTool, node: NodeTool, line: LineTool, rect: RectTool, polygon: PolygonTool, arc: ArcTool, measure: MeasureTool, section: SectionTool, surfaceLoad: SurfaceLoadTool,
-  move: MoveTool, copy: CopyTool, rotate: RotateTool,
+  select: SelectTool, pick: PickTool, orbit: OrbitTool, node: NodeTool, line: LineTool, rect: RectTool, polygon: PolygonTool, arc: ArcTool, measure: MeasureTool, section: SectionTool, surfaceLoad: SurfaceLoadTool,
+  transform: TransformTool,
 };

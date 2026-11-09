@@ -49,3 +49,8 @@ assert.equal(P('').ok, false);
 assert.equal(P('a b c').ok, false);
 assert.equal(P('1 2 3 4').ok, false);
 console.log('pointparse: all assertions passed');
+
+// functions in values (degrees)
+assert.ok(Math.abs(evalNumber('cos(60)*4') - 2) < 1e-12);
+assert.ok(Math.abs(evalNumber('sqrt(2)^2') - 2) < 1e-12);
+assert.equal(evalNumber('alert(1)'), null);
